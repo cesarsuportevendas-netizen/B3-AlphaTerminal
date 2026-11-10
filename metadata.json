@@ -1,0 +1,6 @@
+{
+  "name": "Remix B3 AlphaTerminal - Inteligência Fundamentalista & Fluxo Institucional",
+  "description": "Terminal de inteligência de mercado financeiro para ações da B3 com banco de dados integrado, planilha dinâmica, ranking multicritério, rastreamento de grandes investidores e previsões de IA.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
