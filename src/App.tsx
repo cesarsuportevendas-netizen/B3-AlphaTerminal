@@ -38,6 +38,7 @@ import { NotificationBanner, ActiveNotification } from './components/Notificatio
 import { EmptyState } from './components/EmptyState';
 import { LoginModal } from './components/LoginModal';
 import { AdminManager } from './components/AdminManager';
+import { AuthGate } from './components/AuthGate';
 import { useAuth } from './context/AuthContext';
 import { exportToExcel, exportToCSV } from './utils/excelParser';
 import { DEFAULT_B3_DATA } from './data/defaultB3Data';
@@ -399,8 +400,9 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans antialiased selection:bg-emerald-500/20 selection:text-emerald-400">
-      {/* 1. Global Navigation & Action Header */}
+    <AuthGate onOpenLoginModal={() => setIsLoginModalOpen(true)}>
+      <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans antialiased selection:bg-emerald-500/20 selection:text-emerald-400">
+        {/* 1. Global Navigation & Action Header */}
       <Header
         activeTab={activeTab}
         setActiveTab={handleNavigateTab}
@@ -612,5 +614,6 @@ export default function App() {
         onDismiss={handleDismissNotification}
       />
     </div>
+    </AuthGate>
   );
 }

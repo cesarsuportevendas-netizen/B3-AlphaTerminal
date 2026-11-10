@@ -10,12 +10,21 @@ import {
   getDoc,
   setDoc,
   updateDoc,
+  onSnapshot,
 } from 'firebase/firestore';
 import { auth, db, googleProvider, handleFirestoreError, OperationType } from '../services/firebase';
 import { UserProfile, UserRole, UserStatus } from '../types/auth';
 
 // Bootstrapped administrator email
 export const BOOTSTRAP_ADMIN_EMAIL = 'cesar.suporte.vendas@gmail.com';
+
+// Administrative credentials requested by user
+export const ADMIN_CREDENTIALS = {
+  username: 'Wdracma',
+  password: 'ce243010CE##',
+};
+
+export const ADMIN_STORAGE_KEY = 'b3_alpha_terminal_admin_auth_v1';
 
 interface AuthContextType {
   user: User | null;
@@ -25,6 +34,7 @@ interface AuthContextType {
   loading: boolean;
   error: string | null;
   loginWithGoogle: () => Promise<UserProfile | null>;
+  loginWithAdminCredentials: (name: string, pass: string) => Promise<{ success: boolean; error?: string }>;
   logout: () => Promise<void>;
   refreshProfile: () => Promise<void>;
 }
@@ -32,8 +42,39 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
+  const [adminSession, setAdminSession] = useState<boolean>(() => {
+    try {
+      const stored = localStorage.getItem(ADMIN_STORAGE_KEY);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        return parsed.username === 'Wdracma';
+      }
+    } catch {}
+    return false;
+  });
+
   const [user, setUser] = useState<User | null>(null);
-  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(() => {
+    try {
+      const stored = localStorage.getItem(ADMIN_STORAGE_KEY);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (parsed.username === 'Wdracma') {
+          return {
+            id: 'admin_wdracma',
+            email: 'wdracma@alphaterminal.admin',
+            displayName: 'Wdracma',
+            role: 'admin',
+            status: 'active',
+            createdAt: '2026-11-09T00:00:00.000Z',
+            lastLoginAt: new Date().toISOString(),
+            notes: 'Administrador Master Credencial (Wdracma)',
+          };
+        }
+      }
+    } catch {}
+    return null;
+  });
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -48,8 +89,9 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
       if (snap.exists()) {
         const existingData = snap.data() as UserProfile;
-        // If bootstrap admin, ensure role is always admin
+        // If bootstrap admin, ensure role is always admin and status is active
         const updatedRole: UserRole = isBootstrapAdmin ? 'admin' : existingData.role || 'member';
+        const updatedStatus: UserStatus = isBootstrapAdmin ? 'active' : existingData.status || 'pending';
         
         const updatedProfile: UserProfile = {
           ...existingData,
@@ -58,14 +100,15 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           displayName: firebaseUser.displayName || existingData.displayName || userEmail.split('@')[0],
           photoURL: firebaseUser.photoURL || existingData.photoURL,
           role: updatedRole,
+          status: updatedStatus,
           lastLoginAt: nowIso,
         };
 
-        // Non-blocking update of last login
+        // Non-blocking update of last login and name
         updateDoc(userDocRef, {
           lastLoginAt: nowIso,
           displayName: updatedProfile.displayName,
-          role: updatedRole,
+          ...(isBootstrapAdmin ? { role: 'admin', status: 'active' } : {}),
         }).catch((err) => console.warn('Could not update lastLoginAt:', err));
 
         // Ensure bootstrap admin record in /admins/{uid}
@@ -80,16 +123,23 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         return updatedProfile;
       } else {
         // Create new user profile in Firestore
+        // New non-admin users start as 'pending' awaiting administrator approval
+        const initialStatus: UserStatus = isBootstrapAdmin ? 'active' : 'pending';
+        const initialRole: UserRole = isBootstrapAdmin ? 'admin' : 'member';
+        const initialNotes = isBootstrapAdmin
+          ? 'Super Administrador Fundador'
+          : 'Cadastro realizado via Google Auth - Aguardando aprovação';
+
         const newProfile: UserProfile = {
           id: firebaseUser.uid,
           email: userEmail,
           displayName: firebaseUser.displayName || userEmail.split('@')[0] || 'Membro B3',
           photoURL: firebaseUser.photoURL || undefined,
-          role: isBootstrapAdmin ? 'admin' : 'member',
-          status: 'active',
+          role: initialRole,
+          status: initialStatus,
           createdAt: nowIso,
           lastLoginAt: nowIso,
-          notes: isBootstrapAdmin ? 'Super Administrador Fundador' : 'Membro cadastrado via login Google',
+          notes: initialNotes,
         };
 
         await setDoc(userDocRef, newProfile);
@@ -114,32 +164,70 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         displayName: firebaseUser.displayName || userEmail.split('@')[0],
         photoURL: firebaseUser.photoURL || undefined,
         role: isBootstrapAdmin ? 'admin' : 'member',
-        status: 'active',
+        status: isBootstrapAdmin ? 'active' : 'pending',
         createdAt: new Date().toISOString(),
         lastLoginAt: new Date().toISOString(),
+        notes: isBootstrapAdmin ? 'Super Administrador Fundador' : 'Aguardando aprovação',
       };
     }
   };
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+    let profileUnsubscribe: (() => void) | null = null;
+
+    const authUnsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       setUser(currentUser);
+      if (profileUnsubscribe) {
+        profileUnsubscribe();
+        profileUnsubscribe = null;
+      }
+
       if (currentUser) {
         try {
           const profile = await fetchOrCreateProfile(currentUser);
           setUserProfile(profile);
           setError(null);
+
+          // Attach real-time listener to user's profile document
+          const userDocRef = doc(db, 'users', currentUser.uid);
+          profileUnsubscribe = onSnapshot(
+            userDocRef,
+            (snap) => {
+              if (snap.exists()) {
+                const freshData = snap.data() as UserProfile;
+                const isBootstrap = (currentUser.email || '').toLowerCase() === BOOTSTRAP_ADMIN_EMAIL.toLowerCase();
+                setUserProfile({
+                  ...freshData,
+                  id: currentUser.uid,
+                  email: currentUser.email || freshData.email,
+                  role: isBootstrap ? 'admin' : freshData.role || 'member',
+                  status: isBootstrap ? 'active' : freshData.status || 'pending',
+                });
+              }
+            },
+            (err) => {
+              console.warn('Real-time profile listener notice:', err);
+            }
+          );
         } catch (err) {
           console.error('Failed to sync user profile:', err);
         }
       } else {
-        setUserProfile(null);
+        // If no firebase user, check if we have a persisted admin session
+        if (!adminSession) {
+          setUserProfile(null);
+        }
       }
       setLoading(false);
     });
 
-    return () => unsubscribe();
-  }, []);
+    return () => {
+      authUnsubscribe();
+      if (profileUnsubscribe) {
+        profileUnsubscribe();
+      }
+    };
+  }, [adminSession]);
 
   const loginWithGoogle = async (): Promise<UserProfile | null> => {
     setLoading(true);
@@ -160,10 +248,64 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
   };
 
+  const loginWithAdminCredentials = async (
+    nameInput: string,
+    passInput: string
+  ): Promise<{ success: boolean; error?: string }> => {
+    setLoading(true);
+    setError(null);
+    const cleanName = (nameInput || '').trim();
+    const cleanPass = (passInput || '').trim();
+
+    if (
+      cleanName.toLowerCase() === ADMIN_CREDENTIALS.username.toLowerCase() &&
+      cleanPass === ADMIN_CREDENTIALS.password
+    ) {
+      const nowIso = new Date().toISOString();
+      const adminProf: UserProfile = {
+        id: 'admin_wdracma',
+        email: 'wdracma@alphaterminal.admin',
+        displayName: 'Wdracma',
+        role: 'admin',
+        status: 'active',
+        createdAt: nowIso,
+        lastLoginAt: nowIso,
+        notes: 'Administrador Master Credencial (Wdracma)',
+      };
+
+      try {
+        localStorage.setItem(
+          ADMIN_STORAGE_KEY,
+          JSON.stringify({ username: 'Wdracma', timestamp: Date.now() })
+        );
+      } catch (e) {}
+
+      // Register or update in Firestore if possible
+      try {
+        const adminDocRef = doc(db, 'users', 'admin_wdracma');
+        setDoc(adminDocRef, adminProf, { merge: true }).catch(() => {});
+      } catch (e) {}
+
+      setAdminSession(true);
+      setUserProfile(adminProf);
+      setLoading(false);
+      return { success: true };
+    } else {
+      setLoading(false);
+      const errMsg = 'Nome ou senha administrativa incorretos.';
+      setError(errMsg);
+      return { success: false, error: errMsg };
+    }
+  };
+
   const logout = async () => {
     setLoading(true);
     try {
-      await signOut(auth);
+      try {
+        localStorage.removeItem(ADMIN_STORAGE_KEY);
+      } catch (e) {}
+      setAdminSession(false);
+      await signOut(auth).catch(() => {});
       setUser(null);
       setUserProfile(null);
     } catch (err) {
@@ -181,10 +323,16 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   };
 
   const isAdmin =
+    adminSession ||
     userProfile?.role === 'admin' ||
+    userProfile?.displayName === 'Wdracma' ||
     (user?.email || '').toLowerCase() === BOOTSTRAP_ADMIN_EMAIL.toLowerCase();
 
-  const isMember = Boolean(user && userProfile && userProfile.status === 'active');
+  const isMember = Boolean(
+    isAdmin ||
+    (user && userProfile && userProfile.status === 'active') ||
+    (userProfile && userProfile.status === 'active')
+  );
 
   return (
     <AuthContext.Provider
@@ -196,6 +344,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         loading,
         error,
         loginWithGoogle,
+        loginWithAdminCredentials,
         logout,
         refreshProfile,
       }}

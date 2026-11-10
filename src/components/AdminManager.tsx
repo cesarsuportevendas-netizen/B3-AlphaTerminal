@@ -93,6 +93,23 @@ export const AdminManager: React.FC = () => {
           }
         }
 
+        // Ensure Wdracma admin is present in list
+        const wdracmaExists = loaded.some(
+          (u) => u.displayName === 'Wdracma' || u.id === 'admin_wdracma'
+        );
+        if (!wdracmaExists) {
+          loaded.unshift({
+            id: 'admin_wdracma',
+            email: 'wdracma@alphaterminal.admin',
+            displayName: 'Wdracma',
+            role: 'admin',
+            status: 'active',
+            createdAt: '2026-11-09T00:00:00.000Z',
+            lastLoginAt: userProfile?.displayName === 'Wdracma' ? new Date().toISOString() : 'Recente',
+            notes: 'Administrador Master Credencial',
+          });
+        }
+
         // Sort: Admins first, then by lastLoginAt descending
         loaded.sort((a, b) => {
           if (a.role === 'admin' && b.role !== 'admin') return -1;
@@ -117,9 +134,14 @@ export const AdminManager: React.FC = () => {
   }, [isAdmin, user]);
 
   const handleUpdateStatus = async (targetUser: UserProfile, newStatus: UserStatus) => {
-    // Prevent suspending the bootstrap admin
-    if (targetUser.email.toLowerCase() === BOOTSTRAP_ADMIN_EMAIL.toLowerCase() && newStatus === 'suspended') {
-      setErrorMessage('Não é permitido suspender o Super Administrador.');
+    // Prevent suspending master administrators
+    const isMaster =
+      targetUser.email.toLowerCase() === BOOTSTRAP_ADMIN_EMAIL.toLowerCase() ||
+      targetUser.displayName === 'Wdracma' ||
+      targetUser.id === 'admin_wdracma';
+
+    if (isMaster && newStatus === 'suspended') {
+      setErrorMessage('Não é permitido suspender o Administrador Master.');
       return;
     }
 
@@ -135,9 +157,14 @@ export const AdminManager: React.FC = () => {
   };
 
   const handleUpdateRole = async (targetUser: UserProfile, newRole: UserRole) => {
-    // Prevent changing bootstrap admin role
-    if (targetUser.email.toLowerCase() === BOOTSTRAP_ADMIN_EMAIL.toLowerCase() && newRole === 'member') {
-      setErrorMessage('O Super Administrador deve permanecer com papel de administrador.');
+    // Prevent changing master admin role
+    const isMaster =
+      targetUser.email.toLowerCase() === BOOTSTRAP_ADMIN_EMAIL.toLowerCase() ||
+      targetUser.displayName === 'Wdracma' ||
+      targetUser.id === 'admin_wdracma';
+
+    if (isMaster && newRole === 'member') {
+      setErrorMessage('O Administrador Master deve permanecer com papel de administrador.');
       return;
     }
 
@@ -178,8 +205,13 @@ export const AdminManager: React.FC = () => {
   };
 
   const handleDeleteUser = async (targetUser: UserProfile) => {
-    if (targetUser.email.toLowerCase() === BOOTSTRAP_ADMIN_EMAIL.toLowerCase()) {
-      setErrorMessage('Não é permitido excluir o Super Administrador.');
+    const isMaster =
+      targetUser.email.toLowerCase() === BOOTSTRAP_ADMIN_EMAIL.toLowerCase() ||
+      targetUser.displayName === 'Wdracma' ||
+      targetUser.id === 'admin_wdracma';
+
+    if (isMaster) {
+      setErrorMessage('Não é permitido excluir o Administrador Master.');
       return;
     }
 
@@ -260,6 +292,8 @@ export const AdminManager: React.FC = () => {
   // KPI calculations
   const totalCount = usersList.length;
   const activeCount = usersList.filter((u) => u.status === 'active').length;
+  const pendingUsers = usersList.filter((u) => u.status === 'pending');
+  const pendingCount = pendingUsers.length;
   const suspendedCount = usersList.filter((u) => u.status === 'suspended').length;
   const adminCount = usersList.filter((u) => u.role === 'admin').length;
 
@@ -295,7 +329,7 @@ export const AdminManager: React.FC = () => {
             Painel do Administrador: Gestão de Logins
           </h1>
           <p className="text-sm text-slate-400 mt-1 max-w-2xl">
-            Gerenciamento em tempo real de membros cadastrados, atribuição de permissões (Administrador/Membro), suspensão e auditoria de acessos.
+            Gerenciamento em tempo real de membros cadastrados, aprovação de novas solicitações, permissões e auditoria.
           </p>
         </div>
 
@@ -333,33 +367,83 @@ export const AdminManager: React.FC = () => {
         </div>
       )}
 
+      {/* Quick Approval Queue Banner */}
+      {pendingCount > 0 && (
+        <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/30 space-y-3 shadow-lg">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2 text-amber-300 font-bold text-sm">
+              <Clock className="w-4 h-4 animate-pulse" />
+              <span>Solicitações Aguardando Aprovação ({pendingCount})</span>
+            </div>
+            <span className="text-[11px] text-amber-400 font-mono">Libere o terminal com 1 clique</span>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            {pendingUsers.map((pending) => (
+              <div
+                key={pending.id}
+                className="p-3 bg-slate-900 border border-amber-500/30 rounded-xl flex items-center justify-between gap-3 shadow-sm"
+              >
+                <div className="min-w-0">
+                  <div className="font-bold text-xs text-white truncate">{pending.displayName}</div>
+                  <div className="text-[11px] text-slate-400 font-mono truncate">{pending.email}</div>
+                  <div className="text-[10px] text-slate-500 mt-0.5">
+                    Solicitado: {pending.createdAt ? new Date(pending.createdAt).toLocaleDateString('pt-BR') : 'Hoje'}
+                  </div>
+                </div>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <button
+                    onClick={() => handleUpdateStatus(pending, 'active')}
+                    className="inline-flex items-center gap-1 px-3 py-1.5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs rounded-lg transition-colors cursor-pointer shadow-sm"
+                    title="Aprovar acesso e liberar terminal"
+                  >
+                    <Check className="w-3.5 h-3.5" />
+                    <span>Aprovar</span>
+                  </button>
+                  <button
+                    onClick={() => handleUpdateStatus(pending, 'suspended')}
+                    className="p-1.5 text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition-colors cursor-pointer"
+                    title="Recusar"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* KPI Cards Strip */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="p-4 rounded-xl bg-slate-900 border border-slate-800">
           <div className="flex items-center justify-between text-slate-400 text-xs mb-1">
-            <span>Total de Usuários</span>
+            <span>Total Cadastrados</span>
             <Users className="w-4 h-4 text-slate-400" />
           </div>
           <div className="text-2xl font-bold font-mono text-white">{totalCount}</div>
-          <div className="text-[11px] text-slate-500 mt-1">Cadastrados no Firestore</div>
+          <div className="text-[11px] text-slate-500 mt-1">Registros no Firestore</div>
         </div>
 
         <div className="p-4 rounded-xl bg-slate-900 border border-slate-800">
           <div className="flex items-center justify-between text-slate-400 text-xs mb-1">
-            <span>Membros Ativos</span>
+            <span>Membros Aprovados</span>
             <UserCheck className="w-4 h-4 text-emerald-400" />
           </div>
           <div className="text-2xl font-bold font-mono text-emerald-400">{activeCount}</div>
           <div className="text-[11px] text-slate-500 mt-1">Acesso irrestrito liberado</div>
         </div>
 
-        <div className="p-4 rounded-xl bg-slate-900 border border-slate-800">
+        <div className={`p-4 rounded-xl bg-slate-900 border ${pendingCount > 0 ? 'border-amber-500/40' : 'border-slate-800'}`}>
           <div className="flex items-center justify-between text-slate-400 text-xs mb-1">
-            <span>Suspensos / Pendentes</span>
-            <UserX className="w-4 h-4 text-rose-400" />
+            <span>Aguardando Aprovação</span>
+            <Clock className={`w-4 h-4 ${pendingCount > 0 ? 'text-amber-400 animate-pulse' : 'text-slate-400'}`} />
           </div>
-          <div className="text-2xl font-bold font-mono text-rose-400">{suspendedCount}</div>
-          <div className="text-[11px] text-slate-500 mt-1">Bloqueados para uso</div>
+          <div className={`text-2xl font-bold font-mono ${pendingCount > 0 ? 'text-amber-400' : 'text-slate-300'}`}>
+            {pendingCount}
+          </div>
+          <div className="text-[11px] text-slate-500 mt-1">
+            {pendingCount > 0 ? 'Requer liberação do admin' : 'Nenhuma pendência'}
+          </div>
         </div>
 
         <div className="p-4 rounded-xl bg-slate-900 border border-slate-800">
@@ -447,7 +531,10 @@ export const AdminManager: React.FC = () => {
                 </tr>
               ) : (
                 filteredUsers.map((item) => {
-                  const isBootstrap = item.email.toLowerCase() === BOOTSTRAP_ADMIN_EMAIL.toLowerCase();
+                  const isBootstrap =
+                    item.email.toLowerCase() === BOOTSTRAP_ADMIN_EMAIL.toLowerCase() ||
+                    item.displayName === 'Wdracma' ||
+                    item.id === 'admin_wdracma';
 
                   return (
                     <tr key={item.id} className="hover:bg-slate-800/50 transition-colors">
@@ -461,7 +548,7 @@ export const AdminManager: React.FC = () => {
                               className="w-8 h-8 rounded-full border border-slate-700 shrink-0"
                             />
                           ) : (
-                            <div className="w-8 h-8 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center font-bold text-emerald-400 shrink-0">
+                            <div className="w-8 h-8 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center font-bold text-purple-400 shrink-0">
                               {item.displayName?.[0] || item.email[0] || 'U'}
                             </div>
                           )}
@@ -469,8 +556,8 @@ export const AdminManager: React.FC = () => {
                             <div className="font-bold text-white flex items-center gap-1.5">
                               <span>{item.displayName}</span>
                               {isBootstrap && (
-                                <span className="text-[9px] px-1.5 py-0.2 bg-amber-500/20 text-amber-300 rounded font-mono font-semibold">
-                                  Fundador
+                                <span className="text-[9px] px-1.5 py-0.2 bg-purple-500/20 text-purple-300 border border-purple-500/40 rounded font-mono font-semibold">
+                                  Admin Master
                                 </span>
                               )}
                             </div>
@@ -582,15 +669,27 @@ export const AdminManager: React.FC = () => {
 
                       {/* Actions */}
                       <td className="py-3 px-4 text-right">
-                        {!isBootstrap && (
-                          <button
-                            onClick={() => handleDeleteUser(item)}
-                            className="p-1.5 text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 rounded transition-colors"
-                            title="Excluir cadastro do membro"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        )}
+                        <div className="flex items-center justify-end gap-1.5">
+                          {item.status === 'pending' && (
+                            <button
+                              onClick={() => handleUpdateStatus(item, 'active')}
+                              className="inline-flex items-center gap-1 px-2.5 py-1 bg-emerald-500/20 hover:bg-emerald-500 text-emerald-300 hover:text-slate-950 font-bold text-[11px] rounded transition-colors"
+                              title="Aprovar membro imediatamente"
+                            >
+                              <Check className="w-3 h-3" />
+                              <span>Aprovar</span>
+                            </button>
+                          )}
+                          {!isBootstrap && (
+                            <button
+                              onClick={() => handleDeleteUser(item)}
+                              className="p-1.5 text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 rounded transition-colors"
+                              title="Excluir cadastro do membro"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   );

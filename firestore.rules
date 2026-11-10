@@ -28,18 +28,19 @@ service cloud.firestore {
       allow get: if isSignedIn() && (request.auth.uid == userId || isAdmin());
       allow list: if isAdmin();
       allow create: if isSignedIn() && (
+        isAdmin() ||
         (
           request.auth.uid == userId &&
           incoming().role == 'member' &&
-          incoming().status == 'active' &&
+          (incoming().status == 'pending' || incoming().status == 'active') &&
           incoming().id == request.auth.uid
-        ) || isAdmin()
+        )
       );
       allow update: if isSignedIn() && (
         isAdmin() ||
         (
           request.auth.uid == userId &&
-          incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'lastLoginAt', 'notes'])
+          incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'lastLoginAt'])
         )
       );
       allow delete: if isAdmin();

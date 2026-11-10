@@ -201,26 +201,32 @@ export const Header: React.FC<HeaderProps> = ({
             <span>Carregar Excel / CSV</span>
           </button>
 
-          {/* Member Login / Profile Button */}
-          {user ? (
+          {/* Member / Admin Login Button */}
+          {(user || userProfile) ? (
             <button
               onClick={onOpenLoginModal}
               className="inline-flex items-center gap-2 px-2.5 py-1 text-xs font-medium bg-slate-800 hover:bg-slate-700/80 border border-slate-700 hover:border-slate-600 rounded-md transition-all cursor-pointer"
-              title="Gerenciar Conta / Ver Status de Membro"
+              title="Gerenciar Conta / Ver Status de Administrador ou Membro"
             >
-              {user.photoURL ? (
+              {user?.photoURL ? (
                 <img
                   src={user.photoURL}
                   alt=""
                   className="w-5 h-5 rounded-full border border-emerald-400/40"
                 />
               ) : (
-                <div className="w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center text-[10px] font-bold">
-                  {user.displayName?.[0] || user.email?.[0] || 'U'}
+                <div
+                  className={`w-5 h-5 rounded-full ${
+                    isAdmin
+                      ? 'bg-purple-500/20 text-purple-400 border border-purple-500/40'
+                      : 'bg-emerald-500/20 text-emerald-400'
+                  } flex items-center justify-center text-[10px] font-bold`}
+                >
+                  {userProfile?.displayName?.[0] || user?.displayName?.[0] || user?.email?.[0] || 'A'}
                 </div>
               )}
               <span className="font-semibold text-white max-w-[90px] truncate hidden sm:inline">
-                {user.displayName || user.email?.split('@')[0]}
+                {userProfile?.displayName || user?.displayName || user?.email?.split('@')[0]}
               </span>
               <span
                 className={`text-[9px] px-1.5 py-0.2 rounded font-mono font-bold ${
