@@ -16,12 +16,16 @@ import {
   Filter,
   RefreshCw,
   ChevronDown,
+  User,
+  KeyRound,
 } from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
 
 export interface HeaderProps {
   activeTab: string;
   setActiveTab: (tab: string) => void;
   onOpenUploadModal: () => void;
+  onOpenLoginModal: () => void;
   onExportExcel: () => void;
   onExportCSV: () => void;
   onResetToDefault: () => void;
@@ -45,6 +49,7 @@ export const Header: React.FC<HeaderProps> = ({
   activeTab,
   setActiveTab,
   onOpenUploadModal,
+  onOpenLoginModal,
   onExportExcel,
   onExportCSV,
   onResetToDefault,
@@ -55,6 +60,7 @@ export const Header: React.FC<HeaderProps> = ({
   onToggleSidebar,
   isSidebarOpen,
 }) => {
+  const { user, userProfile, isAdmin } = useAuth();
   const [isExportMenuOpen, setIsExportMenuOpen] = useState(false);
 
   const mainCategories: { group: string; items: NavItem[] }[] = [
@@ -90,6 +96,9 @@ export const Header: React.FC<HeaderProps> = ({
         { id: 'portfolios', label: 'Carteiras IA & Renda', icon: DollarSign },
         { id: 'alerts', label: 'Alertas', icon: Bell, count: unreadAlertsCount },
         { id: 'reports', label: 'Relatórios Executivos', icon: FileSpreadsheet },
+        ...(isAdmin
+          ? [{ id: 'admin', label: 'Painel Admin', icon: KeyRound, badge: 'Logins' }]
+          : []),
       ],
     },
   ];
@@ -186,11 +195,53 @@ export const Header: React.FC<HeaderProps> = ({
           {/* File Upload Modal Button */}
           <button
             onClick={onOpenUploadModal}
-            className="inline-flex items-center gap-1.5 px-3 sm:px-3.5 py-1.5 text-xs font-semibold text-slate-950 bg-emerald-400 hover:bg-emerald-300 rounded-md transition-all shadow-sm shadow-emerald-950/20 whitespace-nowrap"
+            className="inline-flex items-center gap-1.5 px-3 sm:px-3.5 py-1.5 text-xs font-semibold text-slate-950 bg-emerald-400 hover:bg-emerald-300 rounded-md transition-all shadow-sm shadow-emerald-950/20 whitespace-nowrap cursor-pointer"
           >
             <Upload className="w-3.5 h-3.5" />
             <span>Carregar Excel / CSV</span>
           </button>
+
+          {/* Member Login / Profile Button */}
+          {user ? (
+            <button
+              onClick={onOpenLoginModal}
+              className="inline-flex items-center gap-2 px-2.5 py-1 text-xs font-medium bg-slate-800 hover:bg-slate-700/80 border border-slate-700 hover:border-slate-600 rounded-md transition-all cursor-pointer"
+              title="Gerenciar Conta / Ver Status de Membro"
+            >
+              {user.photoURL ? (
+                <img
+                  src={user.photoURL}
+                  alt=""
+                  className="w-5 h-5 rounded-full border border-emerald-400/40"
+                />
+              ) : (
+                <div className="w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center text-[10px] font-bold">
+                  {user.displayName?.[0] || user.email?.[0] || 'U'}
+                </div>
+              )}
+              <span className="font-semibold text-white max-w-[90px] truncate hidden sm:inline">
+                {user.displayName || user.email?.split('@')[0]}
+              </span>
+              <span
+                className={`text-[9px] px-1.5 py-0.2 rounded font-mono font-bold ${
+                  isAdmin
+                    ? 'bg-purple-500/20 text-purple-300 border border-purple-500/40'
+                    : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                }`}
+              >
+                {isAdmin ? 'ADMIN' : 'MEMBRO'}
+              </span>
+            </button>
+          ) : (
+            <button
+              onClick={onOpenLoginModal}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-200 bg-slate-800 hover:bg-slate-700 border border-slate-700 hover:border-emerald-500/50 hover:text-white rounded-md transition-all cursor-pointer whitespace-nowrap shadow-xs"
+              title="Entrar na Área de Membros com Conta Google"
+            >
+              <User className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Login Membros</span>
+            </button>
+          )}
         </div>
       </div>
 

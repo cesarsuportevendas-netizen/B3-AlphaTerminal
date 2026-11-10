@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { StockIndicator } from '../types/stock';
 import { formatCurrency, formatPercent } from '../utils/financialCalculations';
+import { getCompanyFullName } from '../utils/companyNames';
 import { Users, TrendingUp, AlertTriangle, Shield, CheckCircle2, ArrowRight, Eye, Sparkles } from 'lucide-react';
 
 interface InstitutionalFlowTrackerProps {
@@ -164,8 +165,8 @@ export const InstitutionalFlowTracker: React.FC<InstitutionalFlowTrackerProps> =
                   </div>
                 </div>
 
-                <div className="text-xs text-slate-400 truncate mt-1">
-                  {stock.nomeEmpresa}
+                <div className="text-xs text-slate-300 font-medium leading-relaxed break-words whitespace-normal mt-1">
+                  {getCompanyFullName(stock.papel, stock.nomeEmpresa)}
                 </div>
 
                 <div className="flex items-center justify-between text-xs text-slate-400 mt-2.5 pt-2 border-t border-slate-800/60">
@@ -192,8 +193,8 @@ export const InstitutionalFlowTracker: React.FC<InstitutionalFlowTrackerProps> =
                     {formatCurrency(selectedStock.cotacao)}
                   </span>
                 </div>
-                <div className="text-sm text-slate-400">
-                  {selectedStock.nomeEmpresa} · {selectedStock.setor}
+                <div className="text-sm text-slate-300 font-medium leading-relaxed break-words whitespace-normal mt-1">
+                  {getCompanyFullName(selectedStock.papel, selectedStock.nomeEmpresa)} · {selectedStock.setor}
                 </div>
               </div>
 

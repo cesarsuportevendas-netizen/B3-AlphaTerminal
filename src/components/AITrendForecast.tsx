@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { StockIndicator, AIPrediction } from '../types/stock';
 import { formatCurrency, formatPercent } from '../utils/financialCalculations';
+import { getCompanyFullName } from '../utils/companyNames';
 import {
   Sparkles,
   TrendingUp,
@@ -533,8 +534,8 @@ export const AITrendForecast: React.FC<AITrendForecastProps> = ({
                     {formatCurrency(selectedStock.cotacao)}
                   </span>
                 </div>
-                <div className="text-xs text-slate-400 leading-snug break-words whitespace-normal mt-0.5">
-                  {selectedStock.nomeEmpresa} · {selectedStock.setor}
+                <div className="text-xs text-slate-300 font-medium leading-relaxed break-words whitespace-normal mt-1">
+                  {getCompanyFullName(selectedStock.papel, selectedStock.nomeEmpresa)} · {selectedStock.setor}
                 </div>
               </div>
 

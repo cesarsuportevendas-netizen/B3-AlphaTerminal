@@ -18,6 +18,15 @@
   }
 }
 
+@keyframes shrinkWidth {
+  from {
+    width: 100%;
+  }
+  to {
+    width: 0%;
+  }
+}
+
 /* Custom scrollbars for high-density terminal & spreadsheet */
 ::-webkit-scrollbar {
   width: 6px;

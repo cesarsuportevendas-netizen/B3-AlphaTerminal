@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { StockData, AIAnalysisResult } from '../types/stock';
 import { formatCurrency, formatPercent, formatNumber } from '../utils/dataCleaner';
+import { getCompanyFullName } from '../utils/companyNames';
 
 interface AINewsSectionProps {
   stocks: StockData[];
@@ -42,7 +43,7 @@ export const AINewsSection: React.FC<AINewsSectionProps> = ({ stocks, onSelectSt
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           ticker: targetStock.papel,
-          companyName: targetStock.nomeEmpresa || targetStock.papel,
+          companyName: getCompanyFullName(targetStock.papel, targetStock.nomeEmpresa),
           sector: targetStock.setor,
           cotacao: targetStock.cotacao,
           pl: targetStock.pl,
@@ -131,7 +132,7 @@ export const AINewsSection: React.FC<AINewsSectionProps> = ({ stocks, onSelectSt
             >
               {stocks.map((s) => (
                 <option key={s.id} value={s.papel}>
-                  {s.papel} - {s.nomeEmpresa || s.setor} ({formatCurrency(s.cotacao)})
+                  {s.papel} - {getCompanyFullName(s.papel, s.nomeEmpresa)} ({formatCurrency(s.cotacao)})
                 </option>
               ))}
             </select>

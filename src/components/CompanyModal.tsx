@@ -22,6 +22,7 @@ import {
   calculateGrahamFairPrice,
   calculateBazinCeilingPrice,
 } from '../utils/dataCleaner';
+import { getCompanyFullName } from '../utils/companyNames';
 
 interface CompanyModalProps {
   stock: StockData | null;
@@ -144,8 +145,8 @@ export const CompanyModal: React.FC<CompanyModalProps> = ({ stock, onClose, onOp
                 {stock.setor} {stock.subsetor ? `· ${stock.subsetor}` : ''}
               </span>
             </div>
-            <h2 className="text-base text-white font-medium mt-1">
-              {stock.nomeEmpresa || stock.papel}
+            <h2 className="text-base text-white font-medium mt-1 leading-snug break-words">
+              {getCompanyFullName(stock.papel, stock.nomeEmpresa)}
             </h2>
           </div>
 

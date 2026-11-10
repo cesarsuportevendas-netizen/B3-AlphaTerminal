@@ -12,6 +12,7 @@ import {
 import { StockData } from '../types/stock';
 import { MetricCard } from './MetricCard';
 import { formatPercent, formatNumber } from '../utils/dataCleaner';
+import { getCompanyFullName } from '../utils/companyNames';
 import { Award, Zap, Percent, PieChart } from 'lucide-react';
 
 interface ProfitabilitySectionProps {
@@ -147,8 +148,8 @@ export const ProfitabilitySection: React.FC<ProfitabilitySectionProps> = ({
                 <div className="text-lg font-bold font-mono text-emerald-400">
                   {formatPercent(stock.roic)}
                 </div>
-                <div className="text-[10px] text-slate-400 truncate mt-1">
-                  {stock.nomeEmpresa || stock.setor}
+                <div className="text-[11px] text-slate-300 font-medium leading-snug break-words whitespace-normal mt-1">
+                  {getCompanyFullName(stock.papel, stock.nomeEmpresa)}
                 </div>
               </div>
             ))}
@@ -185,8 +186,8 @@ export const ProfitabilitySection: React.FC<ProfitabilitySectionProps> = ({
                 <div className="text-lg font-bold font-mono text-sky-400">
                   {formatPercent(stock.roe)}
                 </div>
-                <div className="text-[10px] text-slate-400 truncate mt-1">
-                  {stock.nomeEmpresa || stock.setor}
+                <div className="text-[11px] text-slate-300 font-medium leading-snug break-words whitespace-normal mt-1">
+                  {getCompanyFullName(stock.papel, stock.nomeEmpresa)}
                 </div>
               </div>
             ))}

@@ -1,0 +1,40 @@
+{
+  "entities": {
+    "userProfile": {
+      "title": "UserProfile",
+      "description": "Perfil de membro do sistema com nível de acesso e status",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "UID do Firebase Auth" },
+        "email": { "type": "string", "description": "Email do membro" },
+        "displayName": { "type": "string", "description": "Nome exibido" },
+        "role": { "type": "string", "enum": ["admin", "member"], "description": "Papel de acesso" },
+        "status": { "type": "string", "enum": ["active", "suspended", "pending"], "description": "Status da conta" },
+        "createdAt": { "type": "string", "description": "Data ISO de criação" },
+        "lastLoginAt": { "type": "string", "description": "Data ISO do último login" },
+        "notes": { "type": "string", "description": "Notas administrativas" }
+      },
+      "required": ["id", "email", "role", "status"]
+    },
+    "admin": {
+      "title": "Admin",
+      "description": "Marcador de permissão de administrador no banco",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string", "description": "Email do administrador" },
+        "addedAt": { "type": "string", "description": "Data de inclusão" }
+      },
+      "required": ["email"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "userProfile",
+      "description": "Coleção de perfis de membros e administradores"
+    },
+    "/admins/{adminId}": {
+      "schema": "admin",
+      "description": "Coleção de administradores autorizados"
+    }
+  }
+}

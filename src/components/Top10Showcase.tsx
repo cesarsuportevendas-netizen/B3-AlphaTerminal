@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { StockIndicator, RankingWeights } from '../types/stock';
 import { formatCurrency, formatPercent } from '../utils/financialCalculations';
+import { getCompanyFullName } from '../utils/companyNames';
 import {
   Sparkles,
   ArrowUpRight,
@@ -358,37 +359,40 @@ export const Top10Showcase: React.FC<Top10ShowcaseProps> = ({
 
       {/* Top 10 Cards Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {top10.map((stock, idx) => (
-          <div
-            key={stock.id}
-            className="p-5 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 transition-all flex flex-col justify-between"
-          >
-            {/* Card Header */}
-            <div>
-              <div className="flex items-start justify-between gap-3">
-                <div className="flex items-start gap-3 min-w-0 flex-1">
-                  <div className="w-8 h-8 shrink-0 rounded-lg bg-slate-800 border border-slate-700 flex items-center justify-center font-mono font-bold text-sm text-emerald-400 mt-0.5">
-                    #{idx + 1}
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-baseline gap-2 flex-wrap">
-                      <button
-                        type="button"
-                        onClick={() => onOpenCompanyModal ? onOpenCompanyModal(stock) : onSelectStockForAI(stock)}
-                        className="text-xl font-bold tracking-tight text-white font-mono hover:text-emerald-400 transition-colors text-left"
-                        title="Ver Raio-X Fundamentalista"
-                      >
-                        {stock.papel}
-                      </button>
-                      <span className="text-sm font-mono text-slate-300">
-                        {formatCurrency(stock.cotacao)}
-                      </span>
+        {top10.map((stock, idx) => {
+          const companyFullName = getCompanyFullName(stock.papel, stock.nomeEmpresa);
+
+          return (
+            <div
+              key={stock.id}
+              className="p-5 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 transition-all flex flex-col justify-between"
+            >
+              {/* Card Header */}
+              <div>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-start gap-3 min-w-0 flex-1">
+                    <div className="w-8 h-8 shrink-0 rounded-lg bg-slate-800 border border-slate-700 flex items-center justify-center font-mono font-bold text-sm text-emerald-400 mt-0.5">
+                      #{idx + 1}
                     </div>
-                    <div className="text-xs text-slate-400 leading-snug break-words whitespace-normal mt-0.5">
-                      {stock.nomeEmpresa}
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-baseline gap-2 flex-wrap">
+                        <button
+                          type="button"
+                          onClick={() => onOpenCompanyModal ? onOpenCompanyModal(stock) : onSelectStockForAI(stock)}
+                          className="text-xl font-bold tracking-tight text-white font-mono hover:text-emerald-400 transition-colors text-left"
+                          title="Ver Raio-X Fundamentalista"
+                        >
+                          {stock.papel}
+                        </button>
+                        <span className="text-sm font-mono text-slate-300">
+                          {formatCurrency(stock.cotacao)}
+                        </span>
+                      </div>
+                      <div className="text-xs text-slate-300 font-medium leading-relaxed break-words whitespace-normal mt-1">
+                        {companyFullName}
+                      </div>
                     </div>
                   </div>
-                </div>
 
                 {/* Strategy-Aware Top-Right Metric Badge */}
                 <div className="text-right shrink-0">
@@ -538,7 +542,8 @@ export const Top10Showcase: React.FC<Top10ShowcaseProps> = ({
               </button>
             </div>
           </div>
-        ))}
+        );
+      })}
       </div>
     </div>
   );

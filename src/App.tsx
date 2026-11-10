@@ -36,6 +36,9 @@ import { CompanyModal } from './components/CompanyModal';
 import { FileUploadModal } from './components/FileUploadModal';
 import { NotificationBanner, ActiveNotification } from './components/NotificationBanner';
 import { EmptyState } from './components/EmptyState';
+import { LoginModal } from './components/LoginModal';
+import { AdminManager } from './components/AdminManager';
+import { useAuth } from './context/AuthContext';
 import { exportToExcel, exportToCSV } from './utils/excelParser';
 import { DEFAULT_B3_DATA } from './data/defaultB3Data';
 
@@ -52,6 +55,7 @@ const INITIAL_FILTERS: FilterState = {
 };
 
 export default function App() {
+  const { isAdmin } = useAuth();
   const [stocks, setStocks] = useState<UnifiedStock[]>(() => getStoredStocks());
   const [activeTab, setActiveTab] = useState<string>('top10');
   const [previousTab, setPreviousTab] = useState<string>('top10');
@@ -61,6 +65,7 @@ export default function App() {
   );
   const [selectedCompanyForModal, setSelectedCompanyForModal] = useState<StockData | null>(null);
   const [isUploadOpen, setIsUploadOpen] = useState(false);
+  const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [sourceName, setSourceName] = useState(
@@ -84,6 +89,7 @@ export default function App() {
     portfolios: 'Carteiras IA & Renda',
     alerts: 'Alertas',
     reports: 'Relatórios Executivos',
+    admin: 'Painel do Administrador',
   };
 
   // Persistent user alerts
@@ -385,7 +391,7 @@ export default function App() {
 
     setTimeout(() => {
       setActiveNotifications((prev) => prev.filter((n) => n.id !== notif.id));
-    }, 6000);
+    }, 5000);
   };
 
   const handleDismissNotification = (id: string) => {
@@ -399,6 +405,7 @@ export default function App() {
         activeTab={activeTab}
         setActiveTab={handleNavigateTab}
         onOpenUploadModal={() => setIsUploadOpen(true)}
+        onOpenLoginModal={() => setIsLoginModalOpen(true)}
         onExportExcel={() => exportStocksToExcel(filteredStocks)}
         onExportCSV={() => exportStocksToCSV(filteredStocks)}
         onResetToDefault={handleResetStocks}
@@ -431,7 +438,9 @@ export default function App() {
 
         {/* Central Viewport Content */}
         <main className="flex-1 min-w-0 p-4 sm:p-6 lg:p-8 space-y-6">
-          {stocks.length === 0 ? (
+          {activeTab === 'admin' ? (
+            <AdminManager />
+          ) : stocks.length === 0 ? (
             <EmptyState
               onOpenUpload={() => setIsUploadOpen(true)}
               onDownloadExcelTemplate={() => exportToExcel(DEFAULT_B3_DATA.slice(0, 5), 'modelo_empresas_b3.xlsx')}
@@ -590,7 +599,14 @@ export default function App() {
         currentStockCount={stocks.length}
       />
 
-      {/* 5. In-App Push Notification Toasts */}
+      {/* 5. Member Login & Authentication Modal */}
+      <LoginModal
+        isOpen={isLoginModalOpen}
+        onClose={() => setIsLoginModalOpen(false)}
+        onOpenAdmin={() => handleNavigateTab('admin')}
+      />
+
+      {/* 6. In-App Push Notification Toasts */}
       <NotificationBanner
         notifications={activeNotifications}
         onDismiss={handleDismissNotification}

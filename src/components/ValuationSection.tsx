@@ -21,6 +21,7 @@ import {
   calculateGrahamFairPrice,
   calculateBazinCeilingPrice,
 } from '../utils/dataCleaner';
+import { getCompanyFullName } from '../utils/companyNames';
 import { TrendingDown, Calculator, HelpCircle } from 'lucide-react';
 
 interface ValuationSectionProps {
@@ -369,8 +370,8 @@ export const ValuationSection: React.FC<ValuationSectionProps> = ({ stocks, onSe
                   >
                     <td className="py-2.5 px-3 font-sans font-bold text-white group-hover:text-emerald-400">
                       {stock.papel}
-                      <span className="block text-[10px] font-normal text-slate-500 truncate max-w-[140px]">
-                        {stock.nomeEmpresa || stock.setor}
+                      <span className="block text-[10px] font-normal text-slate-400 truncate max-w-[180px]">
+                        {getCompanyFullName(stock.papel, stock.nomeEmpresa)}
                       </span>
                     </td>
                     <td className="py-2.5 px-3 text-right text-white font-semibold">

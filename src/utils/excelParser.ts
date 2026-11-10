@@ -1,6 +1,7 @@
 import * as XLSX from 'xlsx';
 import { StockData } from '../types/stock';
 import { parseSafeFloat, parseSafeNumberWithDefault } from './dataCleaner';
+import { getCompanyFullName } from './companyNames';
 
 /**
  * Normalizes column header keys by removing accents, spaces, and punctuation
@@ -64,11 +65,11 @@ export function parseExcelRows(rawRows: Record<string, unknown>[]): StockData[] 
       const crescRec5a = parseSafeFloat(getVal('crescrec5a', 'cresc. rec.5a', 'crescimento receita 5 anos', 'cresc.rec.5a', 'crescreceita5a', 'cresc. rec. 5a (%)'));
       const setorRaw = getVal('setor', 'sector', 'segmento');
       const subsetorRaw = getVal('subsetor', 'subsector');
-      const nomeEmpresaRaw = getVal('nome', 'company', 'razao social', 'nome empresa');
+      const nomeEmpresaRaw = getVal('nome', 'company', 'razao social', 'razaosocial', 'nome empresa', 'empresa', 'nome pregao', 'denominacao social');
 
       const setor = setorRaw ? String(setorRaw).trim() : 'Outros';
       const subsetor = subsetorRaw ? String(subsetorRaw).trim() : undefined;
-      const nomeEmpresa = nomeEmpresaRaw ? String(nomeEmpresaRaw).trim() : undefined;
+      const nomeEmpresa = getCompanyFullName(papel, nomeEmpresaRaw ? String(nomeEmpresaRaw).trim() : undefined);
 
       const lpa = (pl && pl !== 0) ? cotacao / pl : null;
       const vpa = (pvp && pvp !== 0) ? cotacao / pvp : null;

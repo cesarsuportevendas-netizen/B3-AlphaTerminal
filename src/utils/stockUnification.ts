@@ -3,6 +3,7 @@ import { INITIAL_STOCKS } from '../data/initialStocks';
 import { DEFAULT_B3_DATA } from '../data/defaultB3Data';
 import { calculateGrahamFairPrice, calculateBazinCeilingPrice } from './dataCleaner';
 import { calculateRankings } from './financialCalculations';
+import { getCompanyFullName } from './companyNames';
 
 export type UnifiedStock = StockIndicator & StockData;
 
@@ -59,7 +60,7 @@ export function unifyStock(raw: any): UnifiedStock {
   const unified: UnifiedStock = {
     id: raw.id || ticker,
     papel: ticker,
-    nomeEmpresa: raw.nomeEmpresa || ticker,
+    nomeEmpresa: getCompanyFullName(ticker, raw.nomeEmpresa),
     setor: raw.setor || 'Diversos',
     subsetor: raw.subsetor || 'Geral',
     cotacao: price,

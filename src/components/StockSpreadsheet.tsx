@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { StockIndicator } from '../types/stock';
 import { formatCurrency, formatPercent, formatLargeNumber } from '../utils/financialCalculations';
+import { getCompanyFullName } from '../utils/companyNames';
 import { Search, Filter, Download, Upload, RotateCcw, Sparkles, Trash2, Edit3, Check, X, Eye } from 'lucide-react';
 
 interface StockSpreadsheetProps {
@@ -303,8 +304,8 @@ export const StockSpreadsheet: React.FC<StockSpreadsheetProps> = ({
                       <span className="font-mono font-bold text-slate-100 group-hover/btn:text-emerald-400 underline decoration-slate-700 hover:decoration-emerald-400 transition-colors">
                         {stock.papel}
                       </span>
-                      <span className="text-[11px] text-slate-400 truncate max-w-[140px] group-hover/btn:text-slate-200" title={stock.nomeEmpresa}>
-                        {stock.nomeEmpresa}
+                      <span className="text-[11px] text-slate-400 truncate max-w-[200px] group-hover/btn:text-slate-200" title={getCompanyFullName(stock.papel, stock.nomeEmpresa)}>
+                        {getCompanyFullName(stock.papel, stock.nomeEmpresa)}
                       </span>
                     </button>
                   </td>

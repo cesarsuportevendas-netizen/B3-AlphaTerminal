@@ -1,0 +1,48 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+    function isSignedIn() { return request.auth != null; }
+    function isAdmin() {
+      return isSignedIn() && (
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
+        request.auth.token.email == 'cesar.suporte.vendas@gmail.com'
+      );
+    }
+
+    match /admins/{adminId} {
+      allow get: if isSignedIn() && (request.auth.uid == adminId || isAdmin());
+      allow list: if isAdmin();
+      allow write: if isAdmin();
+    }
+
+    match /users/{userId} {
+      allow get: if isSignedIn() && (request.auth.uid == userId || isAdmin());
+      allow list: if isAdmin();
+      allow create: if isSignedIn() && (
+        (
+          request.auth.uid == userId &&
+          incoming().role == 'member' &&
+          incoming().status == 'active' &&
+          incoming().id == request.auth.uid
+        ) || isAdmin()
+      );
+      allow update: if isSignedIn() && (
+        isAdmin() ||
+        (
+          request.auth.uid == userId &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'lastLoginAt', 'notes'])
+        )
+      );
+      allow delete: if isAdmin();
+    }
+  }
+}
