@@ -102,6 +102,42 @@ async function hashMemberPassword(uid: string, password: string): Promise<string
   );
 }
 
+async function safeParseJsonResponse(resp: Response): Promise<Record<string, any> | null> {
+  try {
+    const raw = await resp.text();
+    if (!raw) return {};
+    return JSON.parse(raw) as Record<string, any>;
+  } catch {
+    return null;
+  }
+}
+
+function formatFirebaseAuthError(err: unknown): string {
+  const code =
+    typeof err === 'object' && err !== null && 'code' in err
+      ? String((err as { code?: unknown }).code || '')
+      : '';
+  const message = err instanceof Error ? err.message : String(err || '');
+  const host = typeof window !== 'undefined' ? window.location.hostname : '';
+
+  if (code === 'auth/unauthorized-domain' || message.includes('auth/unauthorized-domain')) {
+    return `Domínio "${host}" não autorizado no Firebase Auth. Adicione "${host}" em Firebase Console → Authentication → Settings → Authorized domains.`;
+  }
+  if (code === 'auth/popup-blocked' || message.includes('auth/popup-blocked')) {
+    return 'Pop-up de login bloqueado pelo navegador. Libere pop-ups para este site e tente novamente.';
+  }
+  if (code === 'auth/popup-closed-by-user' || message.includes('auth/popup-closed-by-user')) {
+    return 'Janela de login Google fechada antes da conclusão.';
+  }
+  if (code === 'auth/operation-not-allowed' || message.includes('auth/operation-not-allowed')) {
+    return 'Login Google não está habilitado nas configurações do Firebase Authentication.';
+  }
+  if (code === 'auth/network-request-failed' || message.includes('auth/network-request-failed')) {
+    return 'Falha de rede ao conectar com o serviço de autenticação Google/Firebase.';
+  }
+  return message || 'Falha na autenticação com Google.';
+}
+
 function readStoredAdminSession(): { active: boolean; token: string | null } {
   try {
     const stored = localStorage.getItem(ADMIN_STORAGE_KEY);
@@ -496,7 +532,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       setUserProfile(profile);
       return profile;
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Falha na autenticação com Google.';
+      const msg = formatFirebaseAuthError(err);
       setError(msg);
       console.error('Login error:', err);
       return null;
@@ -522,7 +558,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       return token;
     } catch (err) {
       console.error('Google Drive connection error:', err);
-      throw err;
+      throw new Error(formatFirebaseAuthError(err));
     } finally {
       isConnectingDriveRef.current = false;
     }
@@ -547,7 +583,13 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: cleanEmail, displayName: displayName?.trim() || undefined }),
       });
-      const data = await resp.json();
+      const data = await safeParseJsonResponse(resp);
+
+      if (!data) {
+        const errMsg = `Servidor de autenticação indisponível (HTTP ${resp.status}).`;
+        setError(errMsg);
+        return { success: false, error: errMsg };
+      }
 
       if (!resp.ok) {
         const errMsg = data?.error || 'Não foi possível iniciar o acesso por e-mail.';
@@ -604,7 +646,13 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: cleanEmail, password: cleanPassword }),
       });
-      const data = await resp.json();
+      const data = await safeParseJsonResponse(resp);
+
+      if (!data) {
+        const errMsg = `Servidor de autenticação indisponível (HTTP ${resp.status}).`;
+        setError(errMsg);
+        return { success: false, error: errMsg };
+      }
 
       if (!resp.ok || !data?.token || !data?.member) {
         const errMsg = data?.error || 'E-mail ou senha incorretos.';
@@ -650,7 +698,14 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         body: JSON.stringify({ username: cleanName, password: cleanPass }),
       });
 
-      const data = await resp.json();
+      const data = await safeParseJsonResponse(resp);
+
+      if (!data) {
+        const errMsg = `Endpoint administrativo indisponível (HTTP ${resp.status}). Verifique se as rotas /api/* estão configuradas no deploy.`;
+        setError(errMsg);
+        setLoading(false);
+        return { success: false, error: errMsg };
+      }
 
       if (resp.ok && data?.success && data?.token) {
         const adminProf: UserProfile = data.admin || {

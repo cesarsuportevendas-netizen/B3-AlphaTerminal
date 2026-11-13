@@ -35,6 +35,7 @@ export const AuthGate: React.FC<AuthGateProps> = ({ children, onOpenLoginModal }
     emailToken,
     isAdmin,
     loading,
+    error: authError,
     loginWithGoogle,
     loginWithEmailStart,
     loginWithEmailPassword,
@@ -49,6 +50,7 @@ export const AuthGate: React.FC<AuthGateProps> = ({ children, onOpenLoginModal }
   const [adminPassword, setAdminPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [adminError, setAdminError] = useState<string | null>(null);
+  const [googleError, setGoogleError] = useState<string | null>(null);
 
   // Email login & registration state
   const [emailInput, setEmailInput] = useState('');
@@ -85,10 +87,15 @@ export const AuthGate: React.FC<AuthGateProps> = ({ children, onOpenLoginModal }
     setAdminError(null);
     setEmailError(null);
     setEmailNotice(null);
+    setGoogleError(null);
     try {
-      await loginWithGoogle();
+      const prof = await loginWithGoogle();
+      if (!prof) {
+        // Error state is populated on AuthContext; fallback notice if none
+        setGoogleError(null);
+      }
     } catch (e) {
-      console.error(e);
+      setGoogleError(e instanceof Error ? e.message : 'Falha na autenticação com Google.');
     } finally {
       setIsLoggingIn(false);
     }
@@ -280,6 +287,7 @@ export const AuthGate: React.FC<AuthGateProps> = ({ children, onOpenLoginModal }
                   setAdminError(null);
                   setEmailError(null);
                   setEmailNotice(null);
+                  setGoogleError(null);
                 }}
                 className={`py-2 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
                   authTab === 'login'
@@ -298,6 +306,7 @@ export const AuthGate: React.FC<AuthGateProps> = ({ children, onOpenLoginModal }
                   setAdminError(null);
                   setEmailError(null);
                   setEmailNotice(null);
+                  setGoogleError(null);
                 }}
                 className={`py-2 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
                   authTab === 'register'
@@ -316,6 +325,7 @@ export const AuthGate: React.FC<AuthGateProps> = ({ children, onOpenLoginModal }
                   setAdminError(null);
                   setEmailError(null);
                   setEmailNotice(null);
+                  setGoogleError(null);
                 }}
                 className={`py-2 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
                   authTab === 'admin'
@@ -453,6 +463,13 @@ export const AuthGate: React.FC<AuthGateProps> = ({ children, onOpenLoginModal }
                   </svg>
                   <span>{isLoggingIn ? 'Conectando...' : 'Sign in with Google / Conta Google'}</span>
                 </button>
+
+                {(googleError || authError) && (
+                  <div className="p-3 rounded-lg bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs flex items-start gap-2">
+                    <AlertCircle className="w-4 h-4 shrink-0 text-rose-400 mt-0.5" />
+                    <span>{googleError || authError}</span>
+                  </div>
+                )}
               </div>
             )}
 
@@ -561,6 +578,13 @@ export const AuthGate: React.FC<AuthGateProps> = ({ children, onOpenLoginModal }
                   </svg>
                   <span>{isLoggingIn ? 'Conectando...' : 'Cadastrar com Conta Google'}</span>
                 </button>
+
+                {(googleError || authError) && (
+                  <div className="p-3 rounded-lg bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs flex items-start gap-2">
+                    <AlertCircle className="w-4 h-4 shrink-0 text-rose-400 mt-0.5" />
+                    <span>{googleError || authError}</span>
+                  </div>
+                )}
               </div>
             )}
 
