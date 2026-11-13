@@ -80,6 +80,8 @@ export interface StockIndicator {
   favorito?: boolean;
   monitorado?: boolean;
   observacoes?: string;
+  onlineSources?: string[];
+  onlineUpdatedAt?: string;
 }
 
 export interface StockData {
@@ -123,6 +125,8 @@ export interface StockData {
   pontoEntrada?: number;
   stopLoss?: number;
   tendenciaTecnica?: string;
+  onlineSources?: string[];
+  onlineUpdatedAt?: string;
 }
 
 export interface FilterState {

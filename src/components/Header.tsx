@@ -30,6 +30,8 @@ export interface HeaderProps {
   onExportExcel: () => void;
   onExportCSV: () => void;
   onResetToDefault: () => void;
+  onRefreshOnline?: () => void;
+  isRefreshingOnline?: boolean;
   unreadAlertsCount: number;
   totalStocks: number;
   filteredStocks: number;
@@ -54,6 +56,8 @@ export const Header: React.FC<HeaderProps> = ({
   onExportExcel,
   onExportCSV,
   onResetToDefault,
+  onRefreshOnline,
+  isRefreshingOnline = false,
   unreadAlertsCount,
   totalStocks,
   filteredStocks,
@@ -149,6 +153,21 @@ export const Header: React.FC<HeaderProps> = ({
             >
               <Filter className="w-3.5 h-3.5 text-emerald-400" />
               <span className="hidden sm:inline">Filtros Quant</span>
+            </button>
+          )}
+
+          {/* Manual Online Market Refresh button (Only Administrators) */}
+          {isAdmin && totalStocks > 0 && onRefreshOnline && (
+            <button
+              onClick={onRefreshOnline}
+              disabled={isRefreshingOnline}
+              title="Atualizar cotações e múltiplos pela internet (Fundamentus, Investidor10, Brapi)"
+              className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-emerald-300 hover:text-emerald-100 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 rounded-md transition-colors cursor-pointer disabled:opacity-60"
+            >
+              <Globe className={`w-3.5 h-3.5 ${isRefreshingOnline ? 'animate-spin' : ''}`} />
+              <span className="hidden lg:inline">
+                {isRefreshingOnline ? 'Atualizando...' : 'Atualizar Online'}
+              </span>
             </button>
           )}
 

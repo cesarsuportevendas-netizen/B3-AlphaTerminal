@@ -920,6 +920,685 @@ Gere uma resposta em JSON estrito contendo:
 });
 
 // ============================================================================
+// Online Market Data Engine (Fundamentus, Investidor10, Brapi & Google Search)
+// ============================================================================
+const ONLINE_CACHE_TTL_MS = 5 * 60 * 1000;
+const ONLINE_HEADERS = {
+  'User-Agent':
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+  Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,application/json,*/*;q=0.8',
+  'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
+};
+
+let fundamentusStocksCache = { expiresAt: 0, map: new Map() };
+let fundamentusFiisCache = { expiresAt: 0, map: new Map() };
+const tickerOnlineCache = new Map();
+
+function decodeHtmlEntities(str) {
+  if (!str) return '';
+  return String(str)
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&ccedil;/gi, 'ç')
+    .replace(/&Ccedil;/gi, 'Ç')
+    .replace(/&aacute;/gi, 'á')
+    .replace(/&eacute;/gi, 'é')
+    .replace(/&iacute;/gi, 'í')
+    .replace(/&oacute;/gi, 'ó')
+    .replace(/&uacute;/gi, 'ú')
+    .replace(/&atilde;/gi, 'ã')
+    .replace(/&otilde;/gi, 'õ')
+    .replace(/&acirc;/gi, 'â')
+    .replace(/&ecirc;/gi, 'ê')
+    .replace(/&ocirc;/gi, 'ô')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function stripHtmlTags(str) {
+  if (!str) return '';
+  return decodeHtmlEntities(String(str).replace(/<[^>]*>/g, ' '));
+}
+
+function parsePtBrNumber(raw) {
+  if (raw === null || raw === undefined) return null;
+  if (typeof raw === 'number') {
+    return Number.isFinite(raw) ? raw : null;
+  }
+  const str = decodeHtmlEntities(String(raw)).replace(/R\$/gi, '').replace(/\s+/g, '').trim();
+  if (!str || str === '-' || str === '--' || str === 'N/A' || str === 'n/d' || str === 'N/D') {
+    return null;
+  }
+  let cleaned = str.replace(/%/g, '');
+  let multiplier = 1;
+  if (/^-?[\d.,]+B$/i.test(cleaned)) {
+    multiplier = 1e9;
+    cleaned = cleaned.slice(0, -1);
+  } else if (/^-?[\d.,]+M$/i.test(cleaned)) {
+    multiplier = 1e6;
+    cleaned = cleaned.slice(0, -1);
+  } else if (/^-?[\d.,]+K$/i.test(cleaned)) {
+    multiplier = 1e3;
+    cleaned = cleaned.slice(0, -1);
+  }
+
+  // Handle Brazilian number format (1.234,56) vs US decimal (12.34)
+  if (cleaned.includes(',')) {
+    cleaned = cleaned.replace(/\./g, '').replace(',', '.');
+  } else if ((cleaned.match(/\./g) || []).length > 1) {
+    cleaned = cleaned.replace(/\./g, '');
+  }
+
+  const num = Number(cleaned);
+  if (!Number.isFinite(num)) return null;
+  return num * multiplier;
+}
+
+function normalizeHeaderKey(header) {
+  return stripHtmlTags(header)
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]/g, '');
+}
+
+function normalizeTickerSymbol(raw) {
+  return String(raw || '')
+    .toUpperCase()
+    .trim()
+    .replace(/\.SA$/i, '')
+    .replace(/[^A-Z0-9]/g, '');
+}
+
+async function fetchHtmlLatin1(url, timeoutMs = 5500) {
+  const response = await fetch(url, {
+    headers: ONLINE_HEADERS,
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status} from ${url}`);
+  }
+  const buf = await response.arrayBuffer();
+  return new TextDecoder('iso-8859-1').decode(buf);
+}
+
+async function fetchTextUtf8(url, extraHeaders = {}, timeoutMs = 5000) {
+  const response = await fetch(url, {
+    headers: { ...ONLINE_HEADERS, ...extraHeaders },
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status} from ${url}`);
+  }
+  return await response.text();
+}
+
+function parseFundamentusTableHtml(html, tableId) {
+  const map = new Map();
+  const tableIdx = html.indexOf(`id="${tableId}"`);
+  if (tableIdx === -1) return map;
+
+  const tableEndIdx = html.indexOf('</table>', tableIdx);
+  const tableHtml =
+    tableEndIdx !== -1 ? html.slice(tableIdx, tableEndIdx + 8) : html.slice(tableIdx, tableIdx + 1200000);
+
+  // Parse headers dynamically from <thead>
+  const headers = [];
+  const theadMatch = tableHtml.match(/<thead>([\s\S]*?)<\/thead>/i);
+  if (theadMatch) {
+    const thMatches = theadMatch[1].matchAll(/<th[^>]*>([\s\S]*?)<\/th>/gi);
+    for (const m of thMatches) {
+      headers.push(normalizeHeaderKey(m[1]));
+    }
+  }
+
+  const tbodyIdx = tableHtml.indexOf('<tbody>');
+  const bodyHtml = tbodyIdx !== -1 ? tableHtml.slice(tbodyIdx) : tableHtml;
+  const rows = bodyHtml.split('<tr');
+
+  for (let i = 1; i < rows.length; i++) {
+    const rowHtml = rows[i];
+    const cells = [];
+    let pos = 0;
+    while (true) {
+      const tdStart = rowHtml.indexOf('<td', pos);
+      if (tdStart === -1) break;
+      const tdClose = rowHtml.indexOf('>', tdStart);
+      if (tdClose === -1) break;
+      const tdEnd = rowHtml.indexOf('</td>', tdClose);
+      if (tdEnd === -1) break;
+      cells.push(stripHtmlTags(rowHtml.slice(tdClose + 1, tdEnd)));
+      pos = tdEnd + 5;
+    }
+
+    if (cells.length < 5) continue;
+    const ticker = normalizeTickerSymbol(cells[0]);
+    if (!ticker || ticker.length < 4) continue;
+
+    const byKey = {};
+    for (let c = 0; c < cells.length; c++) {
+      const key = headers[c] || `col_${c}`;
+      byKey[key] = cells[c];
+    }
+
+    const cotacao = parsePtBrNumber(byKey.cotacao);
+    if (cotacao === null) continue;
+
+    const record = {
+      papel: ticker,
+      cotacao,
+      source: 'Fundamentus',
+    };
+
+    const assignNum = (field, val) => {
+      const parsed = parsePtBrNumber(val);
+      if (parsed !== null) record[field] = parsed;
+    };
+
+    if (byKey.segmento && byKey.segmento !== '-') {
+      record.setor = decodeHtmlEntities(byKey.segmento);
+    }
+    assignNum('pl', byKey.pl);
+    assignNum('pvp', byKey.pvp);
+    assignNum('psr', byKey.psr);
+    assignNum('divYield', byKey.divyield ?? byKey.dividendyield);
+    assignNum('pAtivo', byKey.pativo);
+    assignNum('pCapGiro', byKey.pcapgiro);
+    assignNum('pEbit', byKey.pebit);
+    assignNum('pAtivCircLiq', byKey.pativcircliq);
+    assignNum('evEbit', byKey.evebit);
+    assignNum('evEbitda', byKey.evebitda);
+    assignNum('mrgEbit', byKey.mrgebit);
+    assignNum('mrgLiq', byKey.mrgliq);
+    assignNum('liqCorr', byKey.liqcorr);
+    assignNum('roic', byKey.roic);
+    assignNum('roe', byKey.roe);
+    assignNum('liq2meses', byKey.liq2meses ?? byKey.liquidez);
+    assignNum('patrimLiq', byKey.patrimliq);
+    assignNum('divBrutaPatrim', byKey.divbrutpatrim ?? byKey.divbrutapatrim);
+    assignNum('divLiqPatrim', byKey.divliqpatrim);
+    assignNum('crescRec5a', byKey.crescrec5a);
+    assignNum('valorMercado', byKey.valordemercado);
+
+    map.set(ticker, record);
+  }
+  return map;
+}
+
+async function getFundamentusTables() {
+  const now = Date.now();
+  const tasks = [];
+
+  if (now >= fundamentusStocksCache.expiresAt || fundamentusStocksCache.map.size === 0) {
+    tasks.push(
+      fetchHtmlLatin1('https://www.fundamentus.com.br/resultado.php', 6500)
+        .then((html) => {
+          const parsed = parseFundamentusTableHtml(html, 'resultado');
+          if (parsed.size > 0) {
+            fundamentusStocksCache = { expiresAt: Date.now() + ONLINE_CACHE_TTL_MS, map: parsed };
+          }
+        })
+        .catch(() => {})
+    );
+  }
+
+  if (now >= fundamentusFiisCache.expiresAt || fundamentusFiisCache.map.size === 0) {
+    tasks.push(
+      fetchHtmlLatin1('https://www.fundamentus.com.br/fii_resultado.php', 6500)
+        .then((html) => {
+          const parsed = parseFundamentusTableHtml(html, 'tabelaResultado');
+          if (parsed.size > 0) {
+            fundamentusFiisCache = { expiresAt: Date.now() + ONLINE_CACHE_TTL_MS, map: parsed };
+          }
+        })
+        .catch(() => {})
+    );
+  }
+
+  if (tasks.length > 0) {
+    await Promise.all(tasks);
+  }
+
+  return {
+    stocksMap: fundamentusStocksCache.map,
+    fiisMap: fundamentusFiisCache.map,
+  };
+}
+
+async function fetchFundamentusDetails(ticker) {
+  try {
+    const html = await fetchHtmlLatin1(
+      `https://www.fundamentus.com.br/detalhes.php?papel=${encodeURIComponent(ticker)}`,
+      4500
+    );
+    if (!html || html.includes('Nenhum papel encontrado')) return null;
+
+    const pairs = {};
+    const tdRegex = /<td class="label[^"]*"[^>]*>([\s\S]*?)<\/td>\s*<td class="data[^"]*"[^>]*>([\s\S]*?)<\/td>/gi;
+    let m;
+    while ((m = tdRegex.exec(html)) !== null) {
+      const label = normalizeHeaderKey(m[1]);
+      const value = stripHtmlTags(m[2]);
+      if (label && value && !pairs[label]) {
+        pairs[label] = value;
+      }
+    }
+
+    if (Object.keys(pairs).length === 0) return null;
+
+    const out = { source: 'Fundamentus' };
+    if (pairs.empresa && pairs.empresa !== '-') out.nomeEmpresa = pairs.empresa;
+    if (pairs.setor && pairs.setor !== '-') out.setor = pairs.setor;
+    if (pairs.subsetor && pairs.subsetor !== '-') out.subsetor = pairs.subsetor;
+
+    const setNum = (field, rawVal) => {
+      const n = parsePtBrNumber(rawVal);
+      if (n !== null) out[field] = n;
+    };
+
+    setNum('cotacao', pairs.cotacao);
+    setNum('pl', pairs.pl);
+    setNum('pvp', pairs.pvp);
+    setNum('psr', pairs.psr);
+    setNum('divYield', pairs.divyield);
+    setNum('pAtivo', pairs.pativos ?? pairs.pativo);
+    setNum('pCapGiro', pairs.pcapgiro);
+    setNum('pEbit', pairs.pebit);
+    setNum('pAtivCircLiq', pairs.pativcircliq);
+    setNum('evEbitda', pairs.evebitda);
+    setNum('evEbit', pairs.evebit);
+    setNum('lpa', pairs.lpa);
+    setNum('vpa', pairs.vpa);
+    setNum('mrgBruta', pairs.margbruta);
+    setNum('mrgEbit', pairs.margebit);
+    setNum('mrgLiq', pairs.margliquida);
+    setNum('liqCorr', pairs.liquidezcorr ?? pairs.liqcorr);
+    setNum('roic', pairs.roic);
+    setNum('roe', pairs.roe);
+    setNum('crescRec5a', pairs.cresrec5a);
+    setNum('liq2meses', pairs.volmed2m);
+    setNum('valorMercado', pairs.valordemercado);
+    setNum('patrimLiq', pairs.patrimliq);
+    setNum('caixaDisponivel', pairs.disponibilidades);
+    setNum('receitaLiquida12m', pairs.receitaliquida);
+    setNum('lucroLiquido12m', pairs.lucroliquido);
+
+    const divBruta = parsePtBrNumber(pairs.divbruta);
+    const divLiq = parsePtBrNumber(pairs.divliquida);
+    if (divBruta !== null && out.patrimLiq && out.patrimLiq > 0) {
+      out.divBrutaPatrim = Number((divBruta / out.patrimLiq).toFixed(2));
+    }
+    if (pairs.divliqpatrim !== undefined) {
+      setNum('divLiqPatrim', pairs.divliqpatrim);
+    } else if (divLiq !== null && out.patrimLiq && out.patrimLiq > 0) {
+      out.divLiqPatrim = Number((divLiq / out.patrimLiq).toFixed(2));
+    }
+
+    return out;
+  } catch {
+    return null;
+  }
+}
+
+function parseInvestidor10Html(html) {
+  const out = { source: 'Investidor10' };
+
+  // Extract company name from bounded header slice
+  const headerIdx = html.indexOf('id="header_action"');
+  const headerSlice =
+    headerIdx !== -1 ? html.slice(headerIdx, headerIdx + 6000) : html.slice(0, 60000);
+  const nameMatch = headerSlice.match(/class="name-company"[^>]*>([^<]+)</i);
+  if (nameMatch?.[1]) {
+    const nm = decodeHtmlEntities(nameMatch[1]);
+    if (nm && nm !== '-') out.nomeEmpresa = nm;
+  }
+
+  // Extract price card cleanly using bounded slice
+  const cardsIdx = html.indexOf('id="cards-ticker"');
+  if (cardsIdx !== -1) {
+    const cardsSlice = html.slice(cardsIdx, cardsIdx + 5500);
+    const cotMatch = cardsSlice.match(/_card\s+cotacao[\s\S]{0,600}?<span class="value"[^>]*>([^<]+)</i);
+    if (cotMatch?.[1]) {
+      const price = parsePtBrNumber(cotMatch[1]);
+      if (price !== null && price > 0) out.cotacao = price;
+    } else {
+      const genericPrice = cardsSlice.match(/R\$\s*([\d.,]+)/);
+      if (genericPrice?.[1]) {
+        const price = parsePtBrNumber(genericPrice[1]);
+        if (price !== null && price > 0) out.cotacao = price;
+      }
+    }
+
+    const cardCells = cardsSlice.split('class="_card ');
+    for (let i = 1; i < cardCells.length; i++) {
+      const seg = cardCells[i];
+      const titleM = seg.match(/<span[^>]*title="([^"]+)"[^>]*>|<span[^>]*>\s*([^<]{1,40})\s*<\/span>/i);
+      const valM = seg.match(/class="_card-body"[\s\S]{0,250}?<span[^>]*>([\s\S]*?)<\/span>/i);
+      if (!valM?.[1]) continue;
+      const lbl = normalizeHeaderKey(titleM?.[1] || titleM?.[2] || '');
+      const valNum = parsePtBrNumber(stripHtmlTags(valM[1]));
+      if (valNum === null) continue;
+      if (lbl === 'pl' && out.pl === undefined) out.pl = valNum;
+      else if (lbl === 'pvp' && out.pvp === undefined) out.pvp = valNum;
+      else if ((lbl === 'dy' || lbl === 'dividendyield') && out.divYield === undefined) {
+        out.divYield = valNum;
+      }
+    }
+  }
+
+  // Extract indicators safely by splitting <article class="indicator-card"
+  const indIdx = html.indexOf('id="table-indicators"');
+  if (indIdx !== -1) {
+    const indSlice = html.slice(indIdx, indIdx + 48000);
+    const articles = indSlice.split('<article class="indicator-card"');
+    for (let i = 1; i < articles.length; i++) {
+      const art = articles[i];
+      const nameM = art.match(/indicator-card-name[^>]*>([\s\S]*?)<\/span>/i);
+      const valM = art.match(/indicator-card-value[^>]*>([\s\S]*?)<\/div>/i);
+      if (!nameM || !valM) continue;
+
+      const label = normalizeHeaderKey(nameM[1]);
+      const val = parsePtBrNumber(stripHtmlTags(valM[1]));
+      if (val === null) continue;
+
+      if (label === 'pl') out.pl = val;
+      else if (label === 'pvp') out.pvp = val;
+      else if (label === 'preceitapsr' || label === 'psr') out.psr = val;
+      else if (label === 'dy' || label === 'dividendyield') out.divYield = val;
+      else if (label === 'evebitda') out.evEbitda = val;
+      else if (label === 'evebit') out.evEbit = val;
+      else if (label === 'pebit') out.pEbit = val;
+      else if (label === 'pativo') out.pAtivo = val;
+      else if (label === 'pativocircliq' || label === 'pativcircliq') out.pAtivCircLiq = val;
+      else if (label === 'pcapgiro') out.pCapGiro = val;
+      else if (label === 'lpa') out.lpa = val;
+      else if (label === 'vpa') out.vpa = val;
+      else if (label === 'roe') out.roe = val;
+      else if (label === 'roic') out.roic = val;
+      else if (label === 'margemliquida') out.mrgLiq = val;
+      else if (label === 'margemebit') out.mrgEbit = val;
+      else if (label === 'margembruta') out.mrgBruta = val;
+      else if (label === 'liquidezcorrente') out.liqCorr = val;
+      else if (label === 'dividaliquidapatrimonioliquido' || label === 'dividaliquidapl') {
+        out.divLiqPatrim = val;
+      } else if (label === 'dividabrutapatrimonio' || label === 'divbrutapatrim') {
+        out.divBrutaPatrim = val;
+      } else if (label === 'cagrreceitas5anos') {
+        out.crescRec5a = val;
+      }
+    }
+  }
+
+  // Extract sector from company info table if present
+  const aboutIdx = html.indexOf('id="about-company"');
+  if (aboutIdx !== -1) {
+    const aboutSlice = html.slice(aboutIdx, aboutIdx + 20000);
+    const sectorM = aboutSlice.match(/Setor[\s\S]{0,180}?<span[^>]*class="value"[^>]*>([^<]+)</i);
+    if (sectorM?.[1]) {
+      const sec = decodeHtmlEntities(sectorM[1]);
+      if (sec && sec !== '-') out.setor = sec;
+    }
+  }
+
+  const hasData = out.cotacao !== undefined || out.pl !== undefined || out.pvp !== undefined || out.divYield !== undefined;
+  return hasData ? out : null;
+}
+
+async function fetchInvestidor10(ticker) {
+  const lower = ticker.toLowerCase();
+  const is11 = ticker.endsWith('11');
+  const paths = is11 ? ['fiis', 'acoes'] : ['acoes', 'fiis'];
+
+  for (const kind of paths) {
+    try {
+      const html = await fetchTextUtf8(`https://investidor10.com.br/${kind}/${lower}/`, {}, 4500);
+      if (html && (html.includes('id="cards-ticker"') || html.includes('id="table-indicators"'))) {
+        const parsed = parseInvestidor10Html(html);
+        if (parsed) return parsed;
+      }
+    } catch {
+      // Try alternate path if first fails
+    }
+  }
+  return null;
+}
+
+async function fetchBrapiQuote(ticker) {
+  try {
+    const token = process.env.BRAPI_TOKEN;
+    const url = `https://brapi.dev/api/quote/${encodeURIComponent(ticker)}?fundamental=true`;
+    const headers = token ? { Authorization: `Bearer ${token}` } : {};
+    const text = await fetchTextUtf8(url, headers, 4000);
+    const json = JSON.parse(text);
+    const q = json?.results?.[0];
+    if (!q || typeof q.regularMarketPrice !== 'number') return null;
+
+    const out = {
+      source: 'Brapi',
+      cotacao: q.regularMarketPrice,
+    };
+    if (q.longName || q.shortName) {
+      out.nomeEmpresa = String(q.longName || q.shortName).trim();
+    }
+    if (typeof q.marketCap === 'number' && Number.isFinite(q.marketCap)) {
+      out.valorMercado = q.marketCap;
+    }
+    if (typeof q.priceEarnings === 'number' && Number.isFinite(q.priceEarnings)) {
+      out.pl = Number(q.priceEarnings.toFixed(2));
+    }
+    if (typeof q.earningsPerShare === 'number' && Number.isFinite(q.earningsPerShare)) {
+      out.lpa = Number(q.earningsPerShare.toFixed(2));
+    }
+    return out;
+  } catch {
+    return null;
+  }
+}
+
+async function fetchGeminiTickerFallback(ticker) {
+  if (!ai || Date.now() < geminiQuotaCooldownUntil) return null;
+  try {
+    const prompt = `Pesquise na internet os indicadores fundamentalistas e cotação mais recentes do ativo brasileiro ${ticker} (B3) em portais como Fundamentus, Investidor10, Status Invest ou InfoMoney.
+Retorne SOMENTE um objeto JSON válido com os campos encontrados (use null quando não disponível):
+{
+  "nomeEmpresa": string | null,
+  "setor": string | null,
+  "cotacao": number | null,
+  "pl": number | null,
+  "pvp": number | null,
+  "divYield": number | null,
+  "roe": number | null,
+  "roic": number | null,
+  "mrgLiq": number | null,
+  "liq2meses": number | null,
+  "patrimLiq": number | null
+}`;
+    const response = await ai.models.generateContent({
+      model: 'gemini-4-hydrogen',
+      contents: prompt,
+      config: {
+        tools: [{ googleSearch: {} }],
+      },
+    });
+    const rawText = (response.text || '').trim();
+    const jsonMatch = rawText.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) return null;
+    const parsed = JSON.parse(jsonMatch[0]);
+    if (typeof parsed.cotacao !== 'number' && typeof parsed.pl !== 'number') return null;
+    return {
+      source: 'Google Search IA',
+      ...parsed,
+    };
+  } catch (err) {
+    const errStr = String(err?.message || '');
+    if (errStr.includes('429') || errStr.includes('quota') || errStr.includes('RESOURCE_EXHAUSTED')) {
+      geminiQuotaCooldownUntil = Date.now() + 1000 * 60 * 60;
+    }
+    return null;
+  }
+}
+
+async function enrichSingleTickerOnline(ticker, tables) {
+  const cleanTicker = normalizeTickerSymbol(ticker);
+  if (!cleanTicker) return null;
+
+  const cached = tickerOnlineCache.get(cleanTicker);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.data;
+  }
+
+  const fundTableRow = tables.stocksMap.get(cleanTicker) || tables.fiisMap.get(cleanTicker) || null;
+  const isKnownOnFundamentus = Boolean(fundTableRow);
+
+  // Fetch per-ticker portals in parallel
+  const [fundDetail, inv10, brapi] = await Promise.all([
+    isKnownOnFundamentus || cleanTicker.length >= 5
+      ? fetchFundamentusDetails(cleanTicker)
+      : Promise.resolve(null),
+    fetchInvestidor10(cleanTicker),
+    fetchBrapiQuote(cleanTicker),
+  ]);
+
+  let geminiFallback = null;
+  if (!fundTableRow && !fundDetail && !inv10 && !brapi) {
+    geminiFallback = await fetchGeminiTickerFallback(cleanTicker);
+  }
+
+  const sources = [];
+  if (fundTableRow || fundDetail) sources.push('Fundamentus');
+  if (inv10) sources.push('Investidor10');
+  if (brapi) sources.push('Brapi');
+  if (geminiFallback) sources.push('Google Search');
+
+  if (sources.length === 0) {
+    return null;
+  }
+
+  const merged = {
+    papel: cleanTicker,
+    onlineSources: sources,
+    onlineUpdatedAt: new Date().toISOString(),
+  };
+
+  // Helper to apply non-null values cleanly
+  const applyLayer = (layer) => {
+    if (!layer) return;
+    for (const [k, v] of Object.entries(layer)) {
+      if (k === 'source' || k === 'papel') continue;
+      if (v !== null && v !== undefined && v !== '' && !(typeof v === 'number' && !Number.isFinite(v))) {
+        merged[k] = v;
+      }
+    }
+  };
+
+  // Layer order: Gemini fallback -> Fundamentus Table -> Fundamentus Details -> Investidor10 -> Brapi price
+  applyLayer(geminiFallback);
+  applyLayer(fundTableRow);
+  applyLayer(fundDetail);
+  applyLayer(inv10);
+  if (brapi) {
+    if (typeof brapi.cotacao === 'number' && brapi.cotacao > 0) merged.cotacao = brapi.cotacao;
+    if (brapi.valorMercado) merged.valorMercado = brapi.valorMercado;
+    if (!merged.nomeEmpresa && brapi.nomeEmpresa) merged.nomeEmpresa = brapi.nomeEmpresa;
+    if (merged.pl === undefined && brapi.pl !== undefined) merged.pl = brapi.pl;
+    if (merged.lpa === undefined && brapi.lpa !== undefined) merged.lpa = brapi.lpa;
+  }
+
+  // Prefer intraday quote order: Brapi > Investidor10 > Fundamentus Details > Fundamentus Table
+  const bestPrice =
+    (brapi?.cotacao > 0 && brapi.cotacao) ||
+    (inv10?.cotacao > 0 && inv10.cotacao) ||
+    (fundDetail?.cotacao > 0 && fundDetail.cotacao) ||
+    (fundTableRow?.cotacao > 0 && fundTableRow.cotacao) ||
+    (geminiFallback?.cotacao > 0 && geminiFallback.cotacao);
+
+  if (bestPrice) {
+    merged.cotacao = Number(Number(bestPrice).toFixed(2));
+  }
+
+  // Recompute LPA / VPA if missing and price + P/L or P/VP are available
+  if (merged.cotacao > 0) {
+    if ((merged.lpa === undefined || merged.lpa === null) && merged.pl && merged.pl !== 0) {
+      merged.lpa = Number((merged.cotacao / merged.pl).toFixed(2));
+    }
+    if ((merged.vpa === undefined || merged.vpa === null) && merged.pvp && merged.pvp !== 0) {
+      merged.vpa = Number((merged.cotacao / merged.pvp).toFixed(2));
+    }
+  }
+
+  tickerOnlineCache.set(cleanTicker, {
+    expiresAt: Date.now() + ONLINE_CACHE_TTL_MS,
+    data: merged,
+  });
+
+  return merged;
+}
+
+app.post('/api/stocks/refresh-online', async (req, res) => {
+  try {
+    const rawTickers = Array.isArray(req.body?.tickers)
+      ? req.body.tickers
+      : Array.isArray(req.body?.stocks)
+      ? req.body.stocks.map((s) => s?.papel || s?.ticker || s)
+      : [];
+
+    const uniqueTickers = Array.from(
+      new Set(rawTickers.map((t) => normalizeTickerSymbol(t)).filter((t) => t.length >= 3))
+    ).slice(0, 30);
+
+    if (uniqueTickers.length === 0) {
+      return res.status(400).json({ error: 'Nenhum ticker válido informado para atualização.' });
+    }
+
+    const tables = await getFundamentusTables();
+    const results = {};
+    const sourcesSummary = {};
+    let updatedCount = 0;
+
+    let cursor = 0;
+    const workerCount = Math.min(6, uniqueTickers.length);
+    const workers = Array.from({ length: workerCount }, async () => {
+      while (cursor < uniqueTickers.length) {
+        const idx = cursor++;
+        const ticker = uniqueTickers[idx];
+        try {
+          const enriched = await enrichSingleTickerOnline(ticker, tables);
+          if (enriched) {
+            results[ticker] = enriched;
+            updatedCount++;
+            for (const src of enriched.onlineSources || []) {
+              sourcesSummary[src] = (sourcesSummary[src] || 0) + 1;
+            }
+          }
+        } catch {
+          // Continue processing remaining tickers in batch
+        }
+      }
+    });
+
+    await Promise.all(workers);
+
+    return res.json({
+      updatedAt: new Date().toISOString(),
+      results,
+      stats: {
+        requested: uniqueTickers.length,
+        updated: updatedCount,
+        notFound: uniqueTickers.length - updatedCount,
+        sources: sourcesSummary,
+      },
+    });
+  } catch (err) {
+    console.error('[Online Refresh] Erro ao atualizar ativos:', err);
+    return res.status(500).json({ error: 'Falha ao consultar dados financeiros online.' });
+  }
+});
+
+// ============================================================================
 // Member Registration & Admin Approval Management API (Wdracma + Google Auth)
 // ============================================================================
 const BOOTSTRAP_ADMIN_EMAIL = 'cesar.suporte.vendas@gmail.com';

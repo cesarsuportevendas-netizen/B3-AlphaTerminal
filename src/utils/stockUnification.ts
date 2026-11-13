@@ -136,6 +136,8 @@ export function unifyStock(raw: any): UnifiedStock {
     favorito: raw.favorito,
     monitorado: raw.monitorado,
     observacoes: raw.observacoes,
+    onlineSources: raw.onlineSources,
+    onlineUpdatedAt: raw.onlineUpdatedAt,
   };
 
   return unified;

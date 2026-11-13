@@ -13,11 +13,13 @@ import {
   Shield,
   Lock,
   HardDrive,
+  Globe,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { StockData } from '../types/stock';
 import { readExcelFile, readCSVFile, parseCSVText, exportToExcel, exportToCSV } from '../utils/excelParser';
 import { DEFAULT_B3_DATA } from '../data/defaultB3Data';
+import { refreshStocksOnline, OnlineRefreshProgress } from '../services/onlineStockUpdater';
 
 interface FileUploadModalProps {
   isOpen: boolean;
@@ -39,10 +41,17 @@ export const FileUploadModal: React.FC<FileUploadModalProps> = ({
   const { isAdmin } = useAuth();
   const [activeTab, setActiveTab] = useState<'file' | 'paste'>('file');
   const [importMode, setImportMode] = useState<'merge' | 'replace'>('merge');
+  const [autoUpdateOnline, setAutoUpdateOnline] = useState(true);
+  const [onlineProgress, setOnlineProgress] = useState<OnlineRefreshProgress | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [successInfo, setSuccessInfo] = useState<{ count: number; name: string } | null>(null);
+  const [successInfo, setSuccessInfo] = useState<{
+    count: number;
+    name: string;
+    onlineUpdated?: number;
+    sources?: string[];
+  } | null>(null);
   const [csvText, setCsvText] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -57,6 +66,7 @@ export const FileUploadModal: React.FC<FileUploadModalProps> = ({
     setLoading(true);
     setErrorMessage(null);
     setSuccessInfo(null);
+    setOnlineProgress(null);
 
     try {
       const fileNameLower = file.name.toLowerCase();
@@ -74,11 +84,24 @@ export const FileUploadModal: React.FC<FileUploadModalProps> = ({
         throw new Error('Nenhum registro válido foi encontrado no arquivo. Verifique se os cabeçalhos correspondem ao padrão da B3/Status Invest/Fundamentus.');
       }
 
-      setSuccessInfo({ count: data.length, name: file.name });
+      let onlineUpdated: number | undefined;
+      let sources: string[] | undefined;
+
+      if (autoUpdateOnline) {
+        const summary = await refreshStocksOnline(data, {
+          batchSize: 12,
+          onProgress: (p) => setOnlineProgress(p),
+        });
+        data = summary.stocks;
+        onlineUpdated = summary.updatedCount;
+        sources = summary.sourcesUsed;
+      }
+
+      setSuccessInfo({ count: data.length, name: file.name, onlineUpdated, sources });
       onDataLoaded(data, file.name, importMode);
       setTimeout(() => {
         onClose();
-      }, 1200);
+      }, 1500);
     } catch (err) {
       setErrorMessage(
         err instanceof Error
@@ -87,10 +110,11 @@ export const FileUploadModal: React.FC<FileUploadModalProps> = ({
       );
     } finally {
       setLoading(false);
+      setOnlineProgress(null);
     }
   };
 
-  const handleProcessPastedCSV = () => {
+  const handleProcessPastedCSV = async () => {
     if (!isAdmin) {
       setErrorMessage('Permissão negada. Apenas administradores podem carregar ou atualizar a base de ativos.');
       return;
@@ -104,22 +128,37 @@ export const FileUploadModal: React.FC<FileUploadModalProps> = ({
     setLoading(true);
     setErrorMessage(null);
     setSuccessInfo(null);
+    setOnlineProgress(null);
 
     try {
-      const data = parseCSVText(csvText);
+      let data = parseCSVText(csvText);
       if (data.length === 0) {
         throw new Error('Nenhuma empresa válida encontrada no texto colado. Verifique o cabeçalho e delimitador.');
       }
 
-      setSuccessInfo({ count: data.length, name: 'Texto CSV Colado' });
+      let onlineUpdated: number | undefined;
+      let sources: string[] | undefined;
+
+      if (autoUpdateOnline) {
+        const summary = await refreshStocksOnline(data, {
+          batchSize: 12,
+          onProgress: (p) => setOnlineProgress(p),
+        });
+        data = summary.stocks;
+        onlineUpdated = summary.updatedCount;
+        sources = summary.sourcesUsed;
+      }
+
+      setSuccessInfo({ count: data.length, name: 'Texto CSV Colado', onlineUpdated, sources });
       onDataLoaded(data, 'Dados CSV Colados', importMode);
       setTimeout(() => {
         onClose();
-      }, 1200);
+      }, 1500);
     } catch (err) {
       setErrorMessage(err instanceof Error ? err.message : 'Erro ao processar dados CSV.');
     } finally {
       setLoading(false);
+      setOnlineProgress(null);
     }
   };
 
@@ -318,12 +357,32 @@ export const FileUploadModal: React.FC<FileUploadModalProps> = ({
             </div>
           </div>
 
+          {/* Online Refresh Toggle */}
+          <label className="flex items-start gap-2.5 p-3 rounded-lg bg-slate-950/90 border border-emerald-500/30 cursor-pointer hover:border-emerald-500/60 transition-colors">
+            <input
+              type="checkbox"
+              checked={autoUpdateOnline}
+              onChange={(e) => setAutoUpdateOnline(e.target.checked)}
+              disabled={loading}
+              className="mt-0.5 accent-emerald-400"
+            />
+            <div className="space-y-0.5">
+              <div className="text-xs font-semibold text-white flex items-center gap-1.5">
+                <Globe className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Atualizar dados pela internet ao carregar o arquivo</span>
+              </div>
+              <p className="text-[11px] text-slate-400 leading-relaxed">
+                Busca automaticamente cotações e múltiplos reais dos ativos listados em portais conhecidos (Fundamentus, Investidor10 e Brapi).
+              </p>
+            </div>
+          </label>
+
           {activeTab === 'file' ? (
             <>
               <p className="text-xs text-slate-300 leading-relaxed">
                 Carregue seu arquivo <code className="text-emerald-400 font-mono">.csv</code> ou{' '}
                 <code className="text-emerald-400 font-mono">empresas.xlsx</code> exportado de ferramentas como
-                Status Invest, Fundamentus, Economatica ou seu modelo próprio. Delimitadores por ponto-e-vírgula (<code className="text-slate-400 font-mono">;</code>) e vírgula (<code className="text-slate-400 font-mono">,</code>) são detectados automaticamente.
+                Status Invest, Fundamentus, Economatica ou uma lista com os códigos (<code className="text-slate-300 font-mono">Papel/Ticker</code>).
               </p>
 
               {/* Drag & Drop Zone */}
@@ -331,7 +390,7 @@ export const FileUploadModal: React.FC<FileUploadModalProps> = ({
                 onDrop={handleDrop}
                 onDragOver={handleDragOver}
                 onDragLeave={handleDragLeave}
-                onClick={() => fileInputRef.current?.click()}
+                onClick={() => !loading && fileInputRef.current?.click()}
                 className={`border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-all ${
                   isDragging
                     ? 'border-emerald-400 bg-emerald-500/10'
@@ -343,18 +402,29 @@ export const FileUploadModal: React.FC<FileUploadModalProps> = ({
                   type="file"
                   accept=".csv,.xlsx,.xls,text/csv"
                   onChange={handleFileChange}
+                  disabled={loading}
                   className="hidden"
                 />
 
                 <div className="flex flex-col items-center gap-2">
                   <div className="w-12 h-12 rounded-full bg-slate-800 flex items-center justify-center text-emerald-400">
-                    <Upload className="w-6 h-6" />
+                    {onlineProgress ? (
+                      <RefreshCw className="w-6 h-6 animate-spin" />
+                    ) : (
+                      <Upload className="w-6 h-6" />
+                    )}
                   </div>
                   <span className="text-sm font-semibold text-white">
-                    {loading ? 'Processando dados...' : 'Arraste seu arquivo CSV ou Excel aqui'}
+                    {onlineProgress
+                      ? `Atualizando ativos online (${onlineProgress.processed}/${onlineProgress.total})...`
+                      : loading
+                      ? 'Processando dados...'
+                      : 'Arraste seu arquivo CSV ou Excel aqui'}
                   </span>
                   <span className="text-xs text-slate-400">
-                    Suporta arquivos <strong className="text-emerald-400">.csv</strong> e <strong className="text-emerald-400">.xlsx</strong>
+                    {onlineProgress
+                      ? `Consultando: ${onlineProgress.currentBatch.slice(0, 6).join(', ')}${onlineProgress.currentBatch.length > 6 ? '...' : ''}`
+                      : <>Suporta arquivos <strong className="text-emerald-400">.csv</strong> e <strong className="text-emerald-400">.xlsx</strong></>}
                   </span>
                 </div>
               </div>
@@ -376,8 +446,32 @@ export const FileUploadModal: React.FC<FileUploadModalProps> = ({
                 disabled={loading || !csvText.trim()}
                 className="w-full py-2 bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-slate-950 font-bold text-xs rounded-md transition-colors"
               >
-                {loading ? 'Processando...' : 'Processar e Atualizar Análise'}
+                {onlineProgress
+                  ? `Atualizando online (${onlineProgress.processed}/${onlineProgress.total})...`
+                  : loading
+                  ? 'Processando...'
+                  : 'Processar e Atualizar Análise'}
               </button>
+            </div>
+          )}
+
+          {/* Online Progress Bar */}
+          {onlineProgress && (
+            <div className="p-3 rounded-md bg-slate-950 border border-emerald-500/30 space-y-1.5">
+              <div className="flex items-center justify-between text-[11px] text-emerald-300 font-medium">
+                <span>Buscando cotações e indicadores nos portais...</span>
+                <span className="font-mono">
+                  {onlineProgress.processed}/{onlineProgress.total} ({onlineProgress.updatedCount} atualizados)
+                </span>
+              </div>
+              <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-emerald-400 transition-all duration-300"
+                  style={{
+                    width: `${onlineProgress.total > 0 ? Math.round((onlineProgress.processed / onlineProgress.total) * 100) : 0}%`,
+                  }}
+                />
+              </div>
             </div>
           )}
 
@@ -391,12 +485,23 @@ export const FileUploadModal: React.FC<FileUploadModalProps> = ({
 
           {/* Success Message */}
           {successInfo && (
-            <div className="p-3 rounded-md bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 text-xs flex items-center gap-2">
-              <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-400" />
-              <span>
-                Sucesso! <strong>{successInfo.count}</strong> empresas carregadas de{' '}
-                <em>{successInfo.name}</em>.
-              </span>
+            <div className="p-3 rounded-md bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 text-xs flex items-start gap-2">
+              <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-400 mt-0.5" />
+              <div>
+                <div>
+                  Sucesso! <strong>{successInfo.count}</strong> empresas carregadas de{' '}
+                  <em>{successInfo.name}</em>.
+                </div>
+                {successInfo.onlineUpdated !== undefined && successInfo.onlineUpdated > 0 && (
+                  <div className="text-[11px] text-emerald-200/90 mt-0.5">
+                    {successInfo.onlineUpdated} ativos atualizados via internet
+                    {successInfo.sources && successInfo.sources.length > 0
+                      ? ` (${successInfo.sources.join(', ')})`
+                      : ''}
+                    .
+                  </div>
+                )}
+              </div>
             </div>
           )}
 

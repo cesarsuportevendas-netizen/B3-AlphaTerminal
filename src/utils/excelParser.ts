@@ -37,8 +37,9 @@ export function parseExcelRows(rawRows: Record<string, unknown>[]): StockData[] 
         return null;
       };
 
-      const papelRaw = getVal('papel', 'ticker', 'acao', 'codigo', 'ativo', 'papéis', 'empresa');
-      const papel = papelRaw ? String(papelRaw).toUpperCase().trim() : `ACAO${index + 1}`;
+      const papelRaw = getVal('papel', 'ticker', 'tickers', 'acao', 'acoes', 'codigo', 'codigob3', 'ativo', 'ativos', 'symbol', 'papeis', 'empresa');
+      const papelClean = papelRaw ? String(papelRaw).toUpperCase().trim().replace(/\.SA$/i, '') : `ACAO${index + 1}`;
+      const papel = papelClean;
       if (!papel || papel.length < 3) return null;
 
       const cotacao = parseSafeNumberWithDefault(getVal('cotacao', 'preco', 'price', 'cotacao atual', 'cotacao (r$)'), 0);

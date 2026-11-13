@@ -21,6 +21,7 @@ import {
   LogOut,
   Shield,
   Database,
+  Globe,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { StockData } from '../types/stock';
@@ -46,6 +47,7 @@ import {
   buildExcelBlob,
   buildCSVBlob,
 } from '../utils/excelParser';
+import { refreshStocksOnline, OnlineRefreshProgress } from '../services/onlineStockUpdater';
 
 interface GoogleDriveManagerProps {
   stocks: StockData[];
@@ -138,6 +140,8 @@ export const GoogleDriveManager: React.FC<GoogleDriveManagerProps> = ({
   // Admin Spreadsheet Import Mode modal
   const [importTarget, setImportTarget] = useState<DriveFileItem | null>(null);
   const [importMode, setImportMode] = useState<'merge' | 'replace'>('merge');
+  const [autoUpdateOnline, setAutoUpdateOnline] = useState(true);
+  const [onlineImportProgress, setOnlineImportProgress] = useState<OnlineRefreshProgress | null>(null);
 
   // File Activity modal
   const [activityTarget, setActivityTarget] = useState<DriveFileItem | null>(null);
@@ -337,17 +341,32 @@ export const GoogleDriveManager: React.FC<GoogleDriveManagerProps> = ({
     if (!importTarget || !isAdmin) return;
     setIsBusyAction(true);
     setErrorMsg(null);
+    setOnlineImportProgress(null);
     try {
       const { buffer, isCsv } = await downloadDriveSpreadsheetBuffer(importTarget, driveAccessToken);
       const parsed = parseSpreadsheetBuffer(buffer, isCsv);
       if (parsed.data.length === 0) {
         throw new Error('Nenhum ativo válido da B3 encontrado neste arquivo.');
       }
-      onDataLoaded(parsed.data, `Drive: ${importTarget.name}`, importMode);
+
+      let importedData = parsed.data;
+      let onlineExtra = '';
+      if (autoUpdateOnline) {
+        const summary = await refreshStocksOnline(importedData, {
+          batchSize: 12,
+          onProgress: (p) => setOnlineImportProgress(p),
+        });
+        importedData = summary.stocks;
+        if (summary.updatedCount > 0) {
+          onlineExtra = ` (${summary.updatedCount} atualizados via ${summary.sourcesUsed.join(', ')})`;
+        }
+      }
+
+      onDataLoaded(importedData, `Drive: ${importTarget.name}`, importMode);
       setStatusMsg(
-        `Importados ${parsed.data.length} ativos de "${importTarget.name}" (${
+        `Importados ${importedData.length} ativos de "${importTarget.name}" (${
           importMode === 'replace' ? 'Substituição' : 'Mesclagem'
-        }).`
+        })${onlineExtra}.`
       );
       setImportTarget(null);
     } catch (err) {
@@ -356,6 +375,7 @@ export const GoogleDriveManager: React.FC<GoogleDriveManagerProps> = ({
       );
     } finally {
       setIsBusyAction(false);
+      setOnlineImportProgress(null);
     }
   };
 
@@ -1093,7 +1113,44 @@ export const GoogleDriveManager: React.FC<GoogleDriveManagerProps> = ({
                   </div>
                 </div>
               </label>
+              <label className="flex items-start gap-2.5 p-3 rounded-xl bg-slate-950 border border-emerald-500/30 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={autoUpdateOnline}
+                  onChange={(e) => setAutoUpdateOnline(e.target.checked)}
+                  disabled={isBusyAction}
+                  className="mt-0.5 accent-emerald-400"
+                />
+                <div>
+                  <div className="font-bold text-white flex items-center gap-1.5">
+                    <Globe className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>Atualizar dados pela internet</span>
+                  </div>
+                  <div className="text-[11px] text-slate-400">
+                    Consulta automaticamente cotações e múltiplos reais no Fundamentus, Investidor10 e Brapi.
+                  </div>
+                </div>
+              </label>
             </div>
+
+            {onlineImportProgress && (
+              <div className="p-2.5 rounded-xl bg-slate-950 border border-emerald-500/30 space-y-1">
+                <div className="flex items-center justify-between text-[11px] text-emerald-300 font-medium">
+                  <span>Buscando dados online...</span>
+                  <span className="font-mono">
+                    {onlineImportProgress.processed}/{onlineImportProgress.total} ({onlineImportProgress.updatedCount} OK)
+                  </span>
+                </div>
+                <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-emerald-400 transition-all duration-300"
+                    style={{
+                      width: `${onlineImportProgress.total > 0 ? Math.round((onlineImportProgress.processed / onlineImportProgress.total) * 100) : 0}%`,
+                    }}
+                  />
+                </div>
+              </div>
+            )}
 
             <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
               <button
@@ -1110,7 +1167,11 @@ export const GoogleDriveManager: React.FC<GoogleDriveManagerProps> = ({
                 disabled={isBusyAction}
                 className="px-4 py-2 text-xs font-bold bg-emerald-500 hover:bg-emerald-400 text-slate-950 rounded-lg cursor-pointer disabled:opacity-50"
               >
-                {isBusyAction ? 'Importando...' : 'Confirmar Importação'}
+                {onlineImportProgress
+                  ? `Atualizando (${onlineImportProgress.processed}/${onlineImportProgress.total})...`
+                  : isBusyAction
+                  ? 'Importando...'
+                  : 'Confirmar Importação'}
               </button>
             </div>
           </div>

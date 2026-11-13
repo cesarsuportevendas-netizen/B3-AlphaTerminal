@@ -43,6 +43,7 @@ import { AuthGate } from './components/AuthGate';
 import { useAuth } from './context/AuthContext';
 import { exportToExcel, exportToCSV } from './utils/excelParser';
 import { DEFAULT_B3_DATA } from './data/defaultB3Data';
+import { refreshStocksOnline } from './services/onlineStockUpdater';
 
 const INITIAL_FILTERS: FilterState = {
   search: '',
@@ -75,6 +76,7 @@ export default function App() {
   );
   const [filters, setFilters] = useState<FilterState>(INITIAL_FILTERS);
   const [activeNotifications, setActiveNotifications] = useState<ActiveNotification[]>([]);
+  const [isRefreshingOnline, setIsRefreshingOnline] = useState(false);
 
   const TAB_LABELS: Record<string, string> = {
     top10: 'Destaques Top 10',
@@ -292,10 +294,26 @@ export default function App() {
     setFilters(INITIAL_FILTERS);
     if (finalUnified[0]) setSelectedStockForAI(finalUnified[0]);
 
+    // Collect online portal sources if enriched online
+    const onlineSourcesSet = new Set<string>();
+    let onlineUpdatedCount = 0;
+    for (const s of importedMap.values()) {
+      if (s.onlineSources && s.onlineSources.length > 0) {
+        onlineUpdatedCount++;
+        for (const src of s.onlineSources) onlineSourcesSet.add(src);
+      }
+    }
+    const onlineSummaryText =
+      onlineUpdatedCount > 0
+        ? ` Dados online atualizados para ${onlineUpdatedCount} ativos (${Array.from(onlineSourcesSet).join(', ')}).`
+        : '';
+
     // In-app toast notification informing the exact result
-    const notifMessage = mode === 'replace'
-      ? `Base substituída com sucesso: ${mergedList.length} ações únicas carregadas.`
-      : `Base atualizada: ${updatedCount} ações atualizadas, ${addedCount} novas ações adicionadas. Total de ${finalUnified.length} ações sem duplicatas.`;
+    const notifMessage =
+      (mode === 'replace'
+        ? `Base substituída com sucesso: ${mergedList.length} ações únicas carregadas.`
+        : `Base atualizada: ${updatedCount} ações atualizadas, ${addedCount} novas ações adicionadas. Total de ${finalUnified.length} ações sem duplicatas.`) +
+      onlineSummaryText;
 
     setActiveNotifications((prev) => [
       {
@@ -306,6 +324,47 @@ export default function App() {
       },
       ...prev.slice(0, 2),
     ]);
+  };
+
+  const handleRefreshAllOnline = async () => {
+    if (!isAdmin || stocks.length === 0 || isRefreshingOnline) return;
+    setIsRefreshingOnline(true);
+    try {
+      const summary = await refreshStocksOnline(stocks, { batchSize: 12 });
+      const recalculated = calculateRankings(
+        summary.stocks.map((s) => unifyStock(s)),
+        weights
+      );
+      const finalUnified = recalculated.map((s) => unifyStock(s));
+      setStocks(finalUnified);
+      saveStocks(finalUnified);
+      if (finalUnified[0]) setSelectedStockForAI(finalUnified[0]);
+
+      setActiveNotifications((prev) => [
+        {
+          id: 'notif_' + Date.now(),
+          title: 'Dados Atualizados pela Internet',
+          body:
+            summary.updatedCount > 0
+              ? `${summary.updatedCount} de ${summary.totalCount} ativos atualizados via ${summary.sourcesUsed.join(', ')}.`
+              : 'Nenhuma alteração encontrada nos portais para os ativos atuais.',
+          timestamp: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
+        },
+        ...prev.slice(0, 2),
+      ]);
+    } catch (err) {
+      setActiveNotifications((prev) => [
+        {
+          id: 'notif_' + Date.now(),
+          title: 'Erro na Atualização Online',
+          body: err instanceof Error ? err.message : 'Não foi possível consultar os portais financeiros.',
+          timestamp: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
+        },
+        ...prev.slice(0, 2),
+      ]);
+    } finally {
+      setIsRefreshingOnline(false);
+    }
   };
 
   const handleResetStocks = () => {
@@ -427,6 +486,8 @@ export default function App() {
         onExportExcel={() => exportStocksToExcel(filteredStocks)}
         onExportCSV={() => exportStocksToCSV(filteredStocks)}
         onResetToDefault={handleResetStocks}
+        onRefreshOnline={handleRefreshAllOnline}
+        isRefreshingOnline={isRefreshingOnline}
         unreadAlertsCount={alerts.filter((a) => a.ativo).length}
         totalStocks={stocks.length}
         filteredStocks={filteredStocks.length}
