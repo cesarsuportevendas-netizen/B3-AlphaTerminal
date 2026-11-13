@@ -261,10 +261,37 @@ export async function readExcelFile(file: File): Promise<{ data: StockData[]; sh
 }
 
 /**
- * Exports data to an Excel (.xlsx) file
+ * Parses an Excel or CSV ArrayBuffer (e.g. downloaded/exported from Google Drive) into StockData
  */
-export function exportToExcel(data: StockData[], filename = 'analise_fundamentalista_b3.xlsx') {
-  const exportRows = data.map((d) => ({
+export function parseSpreadsheetBuffer(
+  buffer: ArrayBuffer,
+  isCsv: boolean
+): { data: StockData[]; sheetName?: string; totalRows: number } {
+  if (isCsv) {
+    const decoder = new TextDecoder('utf-8');
+    const text = decoder.decode(buffer);
+    const data = parseCSVText(text);
+    return { data, totalRows: data.length };
+  }
+
+  const workbook = XLSX.read(buffer, { type: 'array', cellDates: true });
+  const sheetName = workbook.SheetNames[0];
+  if (!sheetName) {
+    throw new Error('Nenhuma planilha encontrada no arquivo do Google Drive.');
+  }
+
+  const worksheet = workbook.Sheets[sheetName];
+  const rawJson = XLSX.utils.sheet_to_json<Record<string, unknown>>(worksheet, { defval: null });
+  if (!rawJson || rawJson.length === 0) {
+    throw new Error('A planilha está vazia ou os cabeçalhos não foram reconhecidos.');
+  }
+
+  const data = parseExcelRows(rawJson);
+  return { data, sheetName, totalRows: data.length };
+}
+
+function mapStockExportRows(data: StockData[]) {
+  return data.map((d) => ({
     'Papel': d.papel,
     'Nome': d.nomeEmpresa || d.papel,
     'Setor': d.setor,
@@ -286,17 +313,25 @@ export function exportToExcel(data: StockData[], filename = 'analise_fundamental
     'Patrimônio Líquido (R$)': d.patrimLiq,
     'Cresc. Rec. 5a (%)': d.crescRec5a,
   }));
-
-  const worksheet = XLSX.utils.json_to_sheet(exportRows);
-  const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook, worksheet, 'Empresas B3');
-  XLSX.writeFile(workbook, filename);
 }
 
 /**
- * Exports data to a Brazilian standard CSV (.csv) file with semicolon separator and UTF-8 BOM
+ * Generates an Excel (.xlsx) Blob for uploading to Google Drive
  */
-export function exportToCSV(data: StockData[], filename = 'analise_fundamentalista_b3.csv') {
+export function buildExcelBlob(data: StockData[]): Blob {
+  const worksheet = XLSX.utils.json_to_sheet(mapStockExportRows(data));
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, 'Empresas B3');
+  const out = XLSX.write(workbook, { bookType: 'xlsx', type: 'array' });
+  return new Blob([out], {
+    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  });
+}
+
+/**
+ * Generates a Brazilian standard CSV Blob for uploading to Google Drive
+ */
+export function buildCSVBlob(data: StockData[]): Blob {
   const headers = [
     'Papel',
     'Nome',
@@ -344,7 +379,24 @@ export function exportToCSV(data: StockData[], filename = 'analise_fundamentalis
   ]);
 
   const csvContent = '\uFEFF' + [headers.join(';'), ...rows.map((r) => r.join(';'))].join('\r\n');
-  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  return new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+}
+
+/**
+ * Exports data to an Excel (.xlsx) file
+ */
+export function exportToExcel(data: StockData[], filename = 'analise_fundamentalista_b3.xlsx') {
+  const worksheet = XLSX.utils.json_to_sheet(mapStockExportRows(data));
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, 'Empresas B3');
+  XLSX.writeFile(workbook, filename);
+}
+
+/**
+ * Exports data to a Brazilian standard CSV (.csv) file with semicolon separator and UTF-8 BOM
+ */
+export function exportToCSV(data: StockData[], filename = 'analise_fundamentalista_b3.csv') {
+  const blob = buildCSVBlob(data);
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.setAttribute('href', url);

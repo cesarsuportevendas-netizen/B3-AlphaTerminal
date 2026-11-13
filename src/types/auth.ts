@@ -10,7 +10,11 @@ export interface UserProfile {
   status: UserStatus;
   createdAt: string;
   lastLoginAt: string;
+  updatedAt?: string;
   notes?: string;
+  hasPassword?: boolean;
+  passwordHash?: string;
+  passwordUpdatedAt?: string;
 }
 
 export interface AdminRecord {

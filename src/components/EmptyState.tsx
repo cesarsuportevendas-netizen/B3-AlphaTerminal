@@ -11,7 +11,9 @@ import {
   CheckCircle2,
   FileText,
   HelpCircle,
+  Shield,
 } from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
 
 interface EmptyStateProps {
   onOpenUpload: () => void;
@@ -24,6 +26,7 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
   onDownloadExcelTemplate,
   onDownloadCSVTemplate,
 }) => {
+  const { isAdmin } = useAuth();
   const supportedColumns = [
     { name: 'Papel / Ticker', req: true, desc: 'Ex: PETR4, VALE3, ITUB4' },
     { name: 'Cotação (R$)', req: true, desc: 'Preço atual da ação' },
@@ -60,13 +63,20 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
 
           {/* Primary CTA Buttons */}
           <div className="pt-2 flex flex-col sm:flex-row items-center justify-center gap-3">
-            <button
-              onClick={onOpenUpload}
-              className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-3.5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-sm rounded-xl transition-all shadow-lg shadow-emerald-500/20 hover:scale-[1.02] active:scale-[0.98] cursor-pointer"
-            >
-              <Upload className="w-4 h-4" />
-              <span>Carregar Arquivo CSV ou Excel</span>
-            </button>
+            {isAdmin ? (
+              <button
+                onClick={onOpenUpload}
+                className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-3.5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-sm rounded-xl transition-all shadow-lg shadow-emerald-500/20 hover:scale-[1.02] active:scale-[0.98] cursor-pointer"
+              >
+                <Upload className="w-4 h-4" />
+                <span>Carregar Arquivo CSV ou Excel</span>
+              </button>
+            ) : (
+              <div className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-3 bg-slate-900 border border-amber-500/30 text-amber-300 font-medium text-xs rounded-xl shadow-inner">
+                <ShieldCheck className="w-4 h-4 text-amber-400" />
+                <span>Carregamento da base reservado aos administradores</span>
+              </div>
+            )}
 
             <div className="flex items-center gap-2 w-full sm:w-auto">
               {onDownloadExcelTemplate && (

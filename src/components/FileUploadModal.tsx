@@ -10,7 +10,11 @@ import {
   FileType,
   ClipboardPaste,
   FileText,
+  Shield,
+  Lock,
+  HardDrive,
 } from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
 import { StockData } from '../types/stock';
 import { readExcelFile, readCSVFile, parseCSVText, exportToExcel, exportToCSV } from '../utils/excelParser';
 import { DEFAULT_B3_DATA } from '../data/defaultB3Data';
@@ -20,6 +24,7 @@ interface FileUploadModalProps {
   onClose: () => void;
   onDataLoaded: (data: StockData[], sourceName: string, mode: 'merge' | 'replace') => void;
   onResetToDefault: () => void;
+  onOpenGoogleDrive?: () => void;
   currentStockCount?: number;
 }
 
@@ -28,8 +33,10 @@ export const FileUploadModal: React.FC<FileUploadModalProps> = ({
   onClose,
   onDataLoaded,
   onResetToDefault,
+  onOpenGoogleDrive,
   currentStockCount = 58,
 }) => {
+  const { isAdmin } = useAuth();
   const [activeTab, setActiveTab] = useState<'file' | 'paste'>('file');
   const [importMode, setImportMode] = useState<'merge' | 'replace'>('merge');
   const [isDragging, setIsDragging] = useState(false);
@@ -42,6 +49,11 @@ export const FileUploadModal: React.FC<FileUploadModalProps> = ({
   if (!isOpen) return null;
 
   const handleProcessFile = async (file: File) => {
+    if (!isAdmin) {
+      setErrorMessage('Permissão negada. Apenas administradores podem carregar ou atualizar a base de ativos.');
+      return;
+    }
+
     setLoading(true);
     setErrorMessage(null);
     setSuccessInfo(null);
@@ -79,6 +91,11 @@ export const FileUploadModal: React.FC<FileUploadModalProps> = ({
   };
 
   const handleProcessPastedCSV = () => {
+    if (!isAdmin) {
+      setErrorMessage('Permissão negada. Apenas administradores podem carregar ou atualizar a base de ativos.');
+      return;
+    }
+
     if (!csvText.trim()) {
       setErrorMessage('Por favor, cole o texto do arquivo CSV no campo abaixo.');
       return;
@@ -159,36 +176,97 @@ export const FileUploadModal: React.FC<FileUploadModalProps> = ({
           </button>
         </div>
 
-        {/* Tab Selection */}
-        <div className="flex border-b border-slate-800 bg-slate-950/60 p-1 gap-1">
-          <button
-            onClick={() => setActiveTab('file')}
-            className={`flex-1 flex items-center justify-center gap-2 py-2 text-xs font-medium rounded-md transition-all ${
-              activeTab === 'file'
-                ? 'bg-slate-800 text-emerald-400 shadow-xs font-semibold'
-                : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            <Upload className="w-3.5 h-3.5" />
-            <span>Arquivo CSV ou Excel (.xlsx / .csv)</span>
-          </button>
-          <button
-            onClick={() => setActiveTab('paste')}
-            className={`flex-1 flex items-center justify-center gap-2 py-2 text-xs font-medium rounded-md transition-all ${
-              activeTab === 'paste'
-                ? 'bg-slate-800 text-emerald-400 shadow-xs font-semibold'
-                : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            <ClipboardPaste className="w-3.5 h-3.5" />
-            <span>Colar Texto CSV</span>
-          </button>
-        </div>
+        {/* Non-Admin Restriction Message */}
+        {!isAdmin ? (
+          <div className="p-8 text-center space-y-5">
+            <div className="w-16 h-16 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 mx-auto">
+              <Shield className="w-8 h-8" />
+            </div>
+            <div className="space-y-1.5">
+              <h3 className="text-base font-bold text-white">Carregamento Restrito a Administradores</h3>
+              <p className="text-xs text-slate-400 leading-relaxed max-w-md mx-auto">
+                O carregamento, substituição e atualização de arquivos Excel (.xlsx) ou CSV com a base de ativos é uma função exclusiva de administradores autorizados.
+              </p>
+            </div>
+            <div className="p-3.5 bg-slate-950 border border-slate-800 rounded-xl text-xs text-slate-300 max-w-md mx-auto text-left space-y-1">
+              <div className="font-semibold text-slate-200">Como atualizar os dados?</div>
+              <p className="text-slate-400 text-[11px]">
+                Envie o arquivo desejado para um administrador do B3 AlphaTerminal Pro para que a base seja atualizada.
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
+              <button
+                type="button"
+                onClick={handleDownloadExcelTemplate}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-lg border border-slate-700 transition-colors cursor-pointer"
+              >
+                <FileSpreadsheet className="w-4 h-4 text-emerald-400" />
+                <span>Baixar Modelo Excel (.xlsx)</span>
+              </button>
+              <button
+                type="button"
+                onClick={handleDownloadCSVTemplate}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-lg border border-slate-700 transition-colors cursor-pointer"
+              >
+                <Download className="w-4 h-4 text-slate-400" />
+                <span>Baixar Modelo CSV (.csv)</span>
+              </button>
+            </div>
+            <div className="pt-2">
+              <button
+                type="button"
+                onClick={onClose}
+                className="px-6 py-2 bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs rounded-lg transition-colors cursor-pointer"
+              >
+                Fechar
+              </button>
+            </div>
+          </div>
+        ) : (
+          <>
+            {/* Tab Selection */}
+            <div className="flex border-b border-slate-800 bg-slate-950/60 p-1 gap-1">
+              <button
+                onClick={() => setActiveTab('file')}
+                className={`flex-1 flex items-center justify-center gap-2 py-2 text-xs font-medium rounded-md transition-all ${
+                  activeTab === 'file'
+                    ? 'bg-slate-800 text-emerald-400 shadow-xs font-semibold'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                <Upload className="w-3.5 h-3.5" />
+                <span>Arquivo CSV ou Excel (.xlsx / .csv)</span>
+              </button>
+              <button
+                onClick={() => setActiveTab('paste')}
+                className={`flex-1 flex items-center justify-center gap-2 py-2 text-xs font-medium rounded-md transition-all ${
+                  activeTab === 'paste'
+                    ? 'bg-slate-800 text-emerald-400 shadow-xs font-semibold'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                <ClipboardPaste className="w-3.5 h-3.5" />
+                <span>Colar Texto CSV</span>
+              </button>
+              {onOpenGoogleDrive && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onClose();
+                    onOpenGoogleDrive();
+                  }}
+                  className="flex-1 flex items-center justify-center gap-2 py-2 text-xs font-medium rounded-md transition-all text-cyan-300 hover:bg-slate-800 hover:text-cyan-200 cursor-pointer"
+                >
+                  <HardDrive className="w-3.5 h-3.5 text-cyan-400" />
+                  <span>Google Drive</span>
+                </button>
+              )}
+            </div>
 
-        {/* Content */}
-        <div className="p-6 overflow-y-auto space-y-4">
-          {/* Mode Selector: Merge vs Replace */}
-          <div className="p-3 rounded-lg bg-slate-950/80 border border-slate-800 space-y-2">
+            {/* Content */}
+            <div className="p-6 overflow-y-auto space-y-4">
+              {/* Mode Selector: Merge vs Replace */}
+              <div className="p-3 rounded-lg bg-slate-950/80 border border-slate-800 space-y-2">
             <span className="text-[11px] font-semibold text-slate-300 uppercase tracking-wider block">
               Comportamento do Upload na Base de Ativos:
             </span>
@@ -356,6 +434,8 @@ export const FileUploadModal: React.FC<FileUploadModalProps> = ({
             )}
           </div>
         </div>
+        </>
+        )}
       </div>
     </div>
   );

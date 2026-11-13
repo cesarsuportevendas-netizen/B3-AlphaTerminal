@@ -3,6 +3,7 @@ import { StockIndicator } from '../types/stock';
 import { formatCurrency, formatPercent, formatLargeNumber } from '../utils/financialCalculations';
 import { getCompanyFullName } from '../utils/companyNames';
 import { Search, Filter, Download, Upload, RotateCcw, Sparkles, Trash2, Edit3, Check, X, Eye } from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
 
 interface StockSpreadsheetProps {
   stocks: StockIndicator[];
@@ -25,6 +26,7 @@ export const StockSpreadsheet: React.FC<StockSpreadsheetProps> = ({
   onSelectStockForAI,
   onOpenCompanyModal,
 }) => {
+  const { isAdmin } = useAuth();
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedSector, setSelectedSector] = useState<string>('all');
   const [sortField, setSortField] = useState<keyof StockIndicator>('scoreAlpha');
@@ -124,30 +126,35 @@ export const StockSpreadsheet: React.FC<StockSpreadsheetProps> = ({
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
-          <button
-            onClick={onOpenCSVImport}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-500 text-slate-950 font-semibold text-xs rounded-lg hover:bg-emerald-400 transition-colors"
-          >
-            <Upload className="w-4 h-4" />
-            <span>Importar CSV</span>
-          </button>
+          {isAdmin && (
+            <button
+              onClick={onOpenCSVImport}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-500 text-slate-950 font-semibold text-xs rounded-lg hover:bg-emerald-400 transition-colors cursor-pointer"
+              title="Importar dados de planilha CSV ou Excel (Exclusivo Administrador)"
+            >
+              <Upload className="w-4 h-4" />
+              <span>Importar CSV</span>
+            </button>
+          )}
 
           <button
             onClick={onExportCSV}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium rounded-lg border border-slate-700 transition-colors"
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium rounded-lg border border-slate-700 transition-colors cursor-pointer"
           >
             <Download className="w-3.5 h-3.5" />
             <span>Exportar CSV</span>
           </button>
 
-          <button
-            onClick={onResetStocks}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-slate-200 text-xs font-medium rounded-lg border border-slate-800 transition-colors"
-            title="Restaura os valores originais exatos da imagem"
-          >
-            <RotateCcw className="w-3.5 h-3.5" />
-            <span>Restaurar Imagem</span>
-          </button>
+          {isAdmin && (
+            <button
+              onClick={onResetStocks}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-slate-200 text-xs font-medium rounded-lg border border-slate-800 transition-colors cursor-pointer"
+              title="Restaurar base de ativos (Exclusivo Administrador)"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span>Limpar Base</span>
+            </button>
+          )}
         </div>
       </div>
 

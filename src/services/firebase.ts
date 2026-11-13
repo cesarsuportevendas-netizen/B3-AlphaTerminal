@@ -20,12 +20,42 @@ export const app = initializeApp(firebaseConfig);
 // CRITICAL: Must specify firestoreDatabaseId for enterprise database provisioning
 export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
 export const auth = getAuth(app);
+export const SCOPES = [
+  'https://www.googleapis.com/auth/drive',
+  'https://www.googleapis.com/auth/drive.activity',
+  'https://www.googleapis.com/auth/drive.activity.readonly',
+  'https://www.googleapis.com/auth/drive.appdata',
+  'https://www.googleapis.com/auth/drive.apps.readonly',
+  'https://www.googleapis.com/auth/drive.file',
+  'https://www.googleapis.com/auth/drive.install',
+  'https://www.googleapis.com/auth/drive.meet.readonly',
+  'https://www.googleapis.com/auth/drive.metadata',
+  'https://www.googleapis.com/auth/drive.metadata.readonly',
+  'https://www.googleapis.com/auth/drive.photos.readonly',
+  'https://www.googleapis.com/auth/drive.readonly',
+  'https://www.googleapis.com/auth/drive.scripts',
+] as const;
+
 export const googleProvider = new GoogleAuthProvider();
+SCOPES.forEach((scope) => {
+  googleProvider.addScope(scope);
+});
 
 // Standard prompt for Google login
 googleProvider.setCustomParameters({
   prompt: 'select_account',
 });
+
+export function createDriveConsentProvider(): GoogleAuthProvider {
+  const provider = new GoogleAuthProvider();
+  SCOPES.forEach((scope) => {
+    provider.addScope(scope);
+  });
+  provider.setCustomParameters({
+    prompt: 'consent select_account',
+  });
+  return provider;
+}
 
 export enum OperationType {
   CREATE = 'create',

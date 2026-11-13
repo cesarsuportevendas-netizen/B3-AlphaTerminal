@@ -40,7 +40,10 @@ service cloud.firestore {
         isAdmin() ||
         (
           request.auth.uid == userId &&
-          incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'lastLoginAt'])
+          incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'lastLoginAt', 'hasPassword', 'passwordHash', 'passwordUpdatedAt']) &&
+          (!('hasPassword' in incoming()) || incoming().hasPassword is bool) &&
+          (!('passwordHash' in incoming()) || (incoming().passwordHash is string && incoming().passwordHash.size() >= 32 && incoming().passwordHash.size() <= 128)) &&
+          (!('passwordUpdatedAt' in incoming()) || (incoming().passwordUpdatedAt is string && incoming().passwordUpdatedAt.size() <= 64))
         )
       );
       allow delete: if isAdmin();

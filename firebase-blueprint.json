@@ -12,7 +12,10 @@
         "status": { "type": "string", "enum": ["active", "suspended", "pending"], "description": "Status da conta" },
         "createdAt": { "type": "string", "description": "Data ISO de criação" },
         "lastLoginAt": { "type": "string", "description": "Data ISO do último login" },
-        "notes": { "type": "string", "description": "Notas administrativas" }
+        "notes": { "type": "string", "description": "Notas administrativas" },
+        "hasPassword": { "type": "boolean", "description": "Indica se o membro já cadastrou senha" },
+        "passwordHash": { "type": "string", "description": "Hash SHA-256 da senha cadastrada pelo membro" },
+        "passwordUpdatedAt": { "type": "string", "description": "Data ISO de atualização da senha" }
       },
       "required": ["id", "email", "role", "status"]
     },

@@ -38,6 +38,7 @@ import { NotificationBanner, ActiveNotification } from './components/Notificatio
 import { EmptyState } from './components/EmptyState';
 import { LoginModal } from './components/LoginModal';
 import { AdminManager } from './components/AdminManager';
+import { GoogleDriveManager } from './components/GoogleDriveManager';
 import { AuthGate } from './components/AuthGate';
 import { useAuth } from './context/AuthContext';
 import { exportToExcel, exportToCSV } from './utils/excelParser';
@@ -90,6 +91,7 @@ export default function App() {
     portfolios: 'Carteiras IA & Renda',
     alerts: 'Alertas',
     reports: 'Relatórios Executivos',
+    drive: 'Google Drive',
     admin: 'Painel do Administrador',
   };
 
@@ -230,6 +232,19 @@ export default function App() {
     newSource: string,
     mode: 'merge' | 'replace' = 'merge'
   ) => {
+    if (!isAdmin) {
+      setActiveNotifications((prev) => [
+        {
+          id: 'notif_' + Date.now(),
+          title: 'Operação Bloqueada',
+          body: 'Apenas Administradores têm permissão para carregar ou modificar a base de ativos.',
+          timestamp: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
+        },
+        ...prev.slice(0, 2),
+      ]);
+      return;
+    }
+
     // 1. Strict deduplication of incoming items by Ticker (always take the latest occurrence)
     const importedMap = new Map<string, StockData>();
     for (const item of imported) {
@@ -294,6 +309,7 @@ export default function App() {
   };
 
   const handleResetStocks = () => {
+    if (!isAdmin) return;
     const fresh = resetToInitialStocks();
     setStocks(fresh);
     setSourceName('Nenhum arquivo carregado (0 ações)');
@@ -442,6 +458,24 @@ export default function App() {
         <main className="flex-1 min-w-0 p-4 sm:p-6 lg:p-8 space-y-6">
           {activeTab === 'admin' ? (
             <AdminManager />
+          ) : activeTab === 'drive' ? (
+            <GoogleDriveManager
+              stocks={stocks}
+              filteredStocks={filteredStocks}
+              onDataLoaded={handleDataLoaded}
+              onNotify={(title, body) => {
+                const notif: ActiveNotification = {
+                  id: 'notif_' + Date.now(),
+                  title,
+                  body,
+                  timestamp: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
+                };
+                setActiveNotifications((prev) => [notif, ...prev.slice(0, 3)]);
+                setTimeout(() => {
+                  setActiveNotifications((prev) => prev.filter((n) => n.id !== notif.id));
+                }, 5000);
+              }}
+            />
           ) : stocks.length === 0 ? (
             <EmptyState
               onOpenUpload={() => setIsUploadOpen(true)}
@@ -598,6 +632,7 @@ export default function App() {
         onClose={() => setIsUploadOpen(false)}
         onDataLoaded={handleDataLoaded}
         onResetToDefault={handleResetStocks}
+        onOpenGoogleDrive={() => handleNavigateTab('drive')}
         currentStockCount={stocks.length}
       />
 
