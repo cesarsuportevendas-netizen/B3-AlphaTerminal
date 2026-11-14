@@ -21,6 +21,7 @@ import {
   HardDrive,
   Mail,
   GitCompareArrows,
+  LineChart,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
@@ -95,6 +96,7 @@ export const Header: React.FC<HeaderProps> = ({
         { id: 'smartmoney', label: 'Tubarões & Fluxo', icon: Activity },
         { id: 'ai-forecast', label: 'Previsões IA & Trades', icon: Sparkles },
         { id: 'correlation', label: 'Matriz de Correlação', icon: GitCompareArrows, badge: 'D3' },
+        { id: 'backtest', label: 'Backtesting IA vs IBOV', icon: LineChart, badge: 'IA' },
       ],
     },
     {

@@ -919,6 +919,130 @@ Gere uma resposta em JSON estrito contendo:
   }
 });
 
+const marketOutlookCache = new Map();
+
+app.post('/api/ai/market-outlook', async (req, res) => {
+  const top10Stocks = Array.isArray(req.body?.top10Stocks) ? req.body.top10Stocks.slice(0, 10) : [];
+  const totalStocksCount = Number(req.body?.totalStocksCount) || top10Stocks.length;
+
+  const avgPL =
+    top10Stocks.length > 0
+      ? top10Stocks.reduce((s, a) => s + (Number(a.pl) || 0), 0) / top10Stocks.length
+      : 8.5;
+  const avgROIC =
+    top10Stocks.length > 0
+      ? top10Stocks.reduce((s, a) => s + (Number(a.roic) || 0), 0) / top10Stocks.length
+      : 16.2;
+  const avgDY =
+    top10Stocks.length > 0
+      ? top10Stocks.reduce((s, a) => s + (Number(a.divYield) || 0), 0) / top10Stocks.length
+      : 7.4;
+  const tickersKey = top10Stocks.map((s) => s.papel).join(',') || 'DEFAULT';
+  const cacheHit = marketOutlookCache.get(tickersKey);
+  if (cacheHit && cacheHit.expiresAt > Date.now()) {
+    return res.json(cacheHit.data);
+  }
+
+  const buildFallbackOutlook = () => {
+    const sectors = Array.from(new Set(top10Stocks.map((s) => s.setor).filter(Boolean))).slice(0, 4);
+    const topTickers = top10Stocks.slice(0, 5).map((s) => s.papel).join(', ');
+    return {
+      panoramaMacro: `A seleção quantitativa atual (${top10Stocks.length} ativos de um universo de ${totalStocksCount} empresas) apresenta P/L médio de ${avgPL.toFixed(1)}x, ROIC médio de ${avgROIC.toFixed(1)}% e Dividend Yield médio de ${avgDY.toFixed(1)}% a.a. A combinação de múltiplos comprimidos com retorno operacional elevado mantém margem de segurança atrativa frente ao histórico da B3.`,
+      fluxoCapital: `O fluxo institucional concentra-se em papéis líquidos dos setores de ${sectors.join(', ') || 'Energia, Bancos e Utilities'}, com destaque para ${topTickers || 'líderes de caixa'}. Investidores de longo prazo priorizam previsibilidade de proventos e controle de alavancagem diante do cenário de juros reais elevados.`,
+      observacoesCarteira: `A carteira Top 10 equilibra geração de renda passiva (${avgDY.toFixed(1)}% de DY médio) e qualidade operacional (ROIC ${avgROIC.toFixed(1)}%). Recomenda-se escalonar entradas próximas aos suportes técnicos (Pontos de Entrada) e respeitar os Stops Técnicos individuais para proteção contra volatilidade cambial e fiscal.`,
+      riscosEAtencao: [
+        'Sensibilidade da curva de juros futuros (DI) ao cenário fiscal doméstico e política monetária.',
+        'Oscilações em preços internacionais de commodities (Brent e minério de ferro) impactando exportadoras.',
+        'Concentração setorial pontual — monitore correlação entre ativos bancários e cíclicos.',
+      ],
+      sources: [
+        { title: 'B3 - Dados de Mercado e Índices', url: 'https://www.b3.com.br' },
+        { title: 'Banco Central do Brasil - Relatório Focus & Selic', url: 'https://www.bcb.gov.br' },
+      ],
+      grounded: false,
+      updatedAt: new Date().toISOString(),
+    };
+  };
+
+  if (!ai || Date.now() < geminiQuotaCooldownUntil) {
+    const fb = buildFallbackOutlook();
+    marketOutlookCache.set(tickersKey, { expiresAt: Date.now() + 10 * 60 * 1000, data: fb });
+    return res.json(fb);
+  }
+
+  try {
+    const summaryRows = top10Stocks
+      .map(
+        (s, i) =>
+          `#${i + 1} ${s.papel} (${s.setor || 'B3'}): Cot R$${s.cotacao}, P/L ${s.pl}, ROIC ${s.roic}%, DY ${s.divYield}%, Score ${s.scoreAlpha}`
+      )
+      .join('\n');
+
+    const prompt = `Você é o estrategista-chefe de Equity Research do B3 AlphaTerminal.
+Pesquise no Google Search o panorama atual do mercado brasileiro (Ibovespa, taxa Selic, câmbio USD/BRL, fluxo estrangeiro na B3 e cenário para os setores listados) e redija um parecer executivo consolidado para o Relatório Executivo de Carteira.
+
+CARTEIRA TOP 10 ATUAL (P/L médio ${avgPL.toFixed(1)}x, ROIC médio ${avgROIC.toFixed(1)}%, DY médio ${avgDY.toFixed(1)}%):
+${summaryRows || 'Principais Blue Chips da B3'}
+
+Retorne SOMENTE um objeto JSON válido (sem markdown extra) com os campos:
+{
+  "panoramaMacro": "2-3 frases objetivas conectando o momento atual da B3/Selic/Ibovespa aos múltiplos da carteira",
+  "fluxoCapital": "2 frases sobre fluxo estrangeiro/institucional e setores em destaque",
+  "observacoesCarteira": "2-3 frases práticas com recomendações de gestão de risco, proventos e disciplina de entrada/stop para esta carteira",
+  "riscosEAtencao": ["risco 1", "risco 2", "risco 3"]
+}`;
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-4-hydrogen',
+      contents: prompt,
+      config: {
+        tools: [{ googleSearch: {} }],
+      },
+    });
+
+    const rawText = (response.text || '').trim();
+    const jsonMatch = rawText.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) throw new Error('JSON não retornado no outlook');
+    const parsed = JSON.parse(jsonMatch[0]);
+
+    const rawChunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks;
+    const sources = [];
+    if (Array.isArray(rawChunks)) {
+      for (const chunk of rawChunks) {
+        if (chunk.web?.uri && chunk.web?.title) {
+          sources.push({ title: chunk.web.title, url: chunk.web.uri });
+        }
+      }
+    }
+
+    const result = {
+      panoramaMacro: parsed.panoramaMacro || buildFallbackOutlook().panoramaMacro,
+      fluxoCapital: parsed.fluxoCapital || buildFallbackOutlook().fluxoCapital,
+      observacoesCarteira: parsed.observacoesCarteira || buildFallbackOutlook().observacoesCarteira,
+      riscosEAtencao: Array.isArray(parsed.riscosEAtencao)
+        ? parsed.riscosEAtencao.slice(0, 4)
+        : buildFallbackOutlook().riscosEAtencao,
+      sources:
+        sources.length > 0
+          ? sources.slice(0, 5)
+          : buildFallbackOutlook().sources,
+      grounded: true,
+      updatedAt: new Date().toISOString(),
+    };
+
+    marketOutlookCache.set(tickersKey, { expiresAt: Date.now() + 15 * 60 * 1000, data: result });
+    return res.json(result);
+  } catch (err) {
+    const errStr = String(err?.message || '');
+    if (errStr.includes('429') || errStr.includes('quota') || errStr.includes('RESOURCE_EXHAUSTED')) {
+      geminiQuotaCooldownUntil = Date.now() + 1000 * 60 * 60;
+    }
+    const fb = buildFallbackOutlook();
+    marketOutlookCache.set(tickersKey, { expiresAt: Date.now() + 10 * 60 * 1000, data: fb });
+    return res.json(fb);
+  }
+});
+
 // ============================================================================
 // Online Market Data Engine (Fundamentus, Investidor10, Brapi & Google Search)
 // ============================================================================
@@ -1545,7 +1669,16 @@ const HISTORY_CACHE_TTL_MS = 15 * 60 * 1000;
 const historicalSeriesCache = new Map();
 
 function normalizeYahooRange(raw) {
-  if (raw === '1mo' || raw === '3mo' || raw === '6mo' || raw === '1y') return raw;
+  if (
+    raw === '1mo' ||
+    raw === '3mo' ||
+    raw === '6mo' ||
+    raw === '1y' ||
+    raw === '2y' ||
+    raw === '5y'
+  ) {
+    return raw;
+  }
   return '6mo';
 }
 
@@ -1555,26 +1688,45 @@ function toIsoDateStr(unixSeconds) {
   return d.toISOString().slice(0, 10);
 }
 
-async function fetchYahooDailyHistory(tickerOrSymbol, range = '6mo') {
+async function fetchYahooDailyHistory(tickerOrSymbol, range = '6mo', customWindow = null) {
   const cleanRange = normalizeYahooRange(range);
   const symbol = tickerOrSymbol.startsWith('^')
     ? tickerOrSymbol
     : `${normalizeTickerSymbol(tickerOrSymbol)}.SA`;
-  const cacheKey = `${symbol}:${cleanRange}`;
+
+  const hasCustomWindow =
+    customWindow &&
+    customWindow.startDate &&
+    customWindow.endDate &&
+    !Number.isNaN(Date.parse(customWindow.startDate)) &&
+    !Number.isNaN(Date.parse(customWindow.endDate));
+
+  const cacheKey = hasCustomWindow
+    ? `${symbol}:${customWindow.startDate}:${customWindow.endDate}`
+    : `${symbol}:${cleanRange}`;
   const cached = historicalSeriesCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) {
     return cached.data;
   }
 
+  let queryParams = `range=${cleanRange}&interval=1d&includeAdjustedClose=true`;
+  if (hasCustomWindow) {
+    const p1 = Math.floor(new Date(customWindow.startDate).getTime() / 1000);
+    const p2 = Math.floor(new Date(customWindow.endDate).getTime() / 1000) + 86400;
+    if (p2 > p1 + 86400 * 5) {
+      queryParams = `period1=${p1}&period2=${p2}&interval=1d&includeAdjustedClose=true`;
+    }
+  }
+
   for (const host of ['query1.finance.yahoo.com', 'query2.finance.yahoo.com']) {
     try {
-      const url = `https://${host}/v8/finance/chart/${encodeURIComponent(symbol)}?range=${cleanRange}&interval=1d&includeAdjustedClose=true`;
+      const url = `https://${host}/v8/finance/chart/${encodeURIComponent(symbol)}?${queryParams}`;
       const text = await fetchTextUtf8(
         url,
         {
           Accept: 'application/json',
         },
-        6000
+        7000
       );
       const json = JSON.parse(text);
       const result = json?.chart?.result?.[0];
@@ -1636,7 +1788,8 @@ async function fetchBrapiDailyHistory(ticker, range = '6mo') {
   const cleanTicker = normalizeTickerSymbol(ticker);
   if (!cleanTicker) return null;
   const cleanRange = normalizeYahooRange(range);
-  const cacheKey = `BRAPI:${cleanTicker}:${cleanRange}`;
+  const brapiRange = cleanRange === '2y' || cleanRange === '5y' ? '1y' : cleanRange;
+  const cacheKey = `BRAPI:${cleanTicker}:${brapiRange}`;
   const cached = historicalSeriesCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) {
     return cached.data;
@@ -1644,7 +1797,7 @@ async function fetchBrapiDailyHistory(ticker, range = '6mo') {
 
   try {
     const token = process.env.BRAPI_TOKEN;
-    const url = `https://brapi.dev/api/quote/${encodeURIComponent(cleanTicker)}?range=${cleanRange}&interval=1d`;
+    const url = `https://brapi.dev/api/quote/${encodeURIComponent(cleanTicker)}?range=${brapiRange}&interval=1d`;
     const headers = token ? { Authorization: `Bearer ${token}` } : {};
     const text = await fetchTextUtf8(url, headers, 5500);
     const json = JSON.parse(text);
@@ -1685,11 +1838,20 @@ async function fetchBrapiDailyHistory(ticker, range = '6mo') {
   }
 }
 
-async function fetchAssetDailyHistory(tickerOrSymbol, range = '6mo') {
-  const yahoo = await fetchYahooDailyHistory(tickerOrSymbol, range);
+async function fetchAssetDailyHistory(tickerOrSymbol, range = '6mo', customWindow = null) {
+  const yahoo = await fetchYahooDailyHistory(tickerOrSymbol, range, customWindow);
   if (yahoo) return yahoo;
   if (!tickerOrSymbol.startsWith('^')) {
-    return await fetchBrapiDailyHistory(tickerOrSymbol, range);
+    const brapi = await fetchBrapiDailyHistory(tickerOrSymbol, range);
+    if (brapi && customWindow?.startDate && customWindow?.endDate) {
+      const filtered = brapi.points.filter(
+        (p) => p.date >= customWindow.startDate && p.date <= customWindow.endDate
+      );
+      if (filtered.length >= 10) {
+        return { ...brapi, points: filtered };
+      }
+    }
+    return brapi;
   }
   return null;
 }
@@ -1977,6 +2139,363 @@ app.post('/api/stocks/correlation-history', async (req, res) => {
   } catch (err) {
     console.error('[Correlation Matrix] Erro:', err);
     return res.status(500).json({ error: 'Falha ao consultar histórico de mercado para a matriz de correlação.' });
+  }
+});
+
+// ============================================================================
+// AI Strategy Historical Backtesting Engine vs IBOV (^BVSP)
+// ============================================================================
+app.post('/api/stocks/backtest', async (req, res) => {
+  try {
+    const rawAllocations = Array.isArray(req.body?.allocations) ? req.body.allocations : [];
+    const range = normalizeYahooRange(req.body?.range || '1y');
+    const startDate = req.body?.startDate ? String(req.body.startDate).slice(0, 10) : null;
+    const endDate = req.body?.endDate ? String(req.body.endDate).slice(0, 10) : null;
+    const initialCapital = Math.max(1000, Number(req.body?.initialCapital) || 50000);
+    const rebalance = req.body?.rebalance === 'monthly' ? 'monthly' : 'none';
+    const strategyName = String(req.body?.strategyName || 'Carteira Sugerida IA');
+
+    const customWindow =
+      startDate && endDate && startDate < endDate ? { startDate, endDate } : null;
+
+    // Normalize ticker weights
+    const allocMap = new Map();
+    for (const item of rawAllocations) {
+      const ticker = normalizeTickerSymbol(item?.papel || item?.ticker || item);
+      if (!ticker || ticker.length < 4) continue;
+      const w = typeof item?.weight === 'number' && item.weight > 0 ? item.weight : 1;
+      allocMap.set(ticker, (allocMap.get(ticker) || 0) + w);
+    }
+
+    const tickersRequested = Array.from(allocMap.keys()).slice(0, 12);
+    if (tickersRequested.length === 0) {
+      return res.status(400).json({ error: 'Informe ao menos um ativo válido para executar o backtest.' });
+    }
+
+    const [ibovHist, ...assetHistResults] = await Promise.all([
+      fetchAssetDailyHistory('^BVSP', range, customWindow),
+      ...tickersRequested.map((t) => fetchAssetDailyHistory(t, range, customWindow)),
+    ]);
+
+    const validAssets = assetHistResults.filter((h) => h && h.points && h.points.length >= 10);
+    const failedTickers = tickersRequested.filter(
+      (t) => !validAssets.some((h) => h.ticker === t)
+    );
+
+    if (validAssets.length === 0 || !ibovHist || ibovHist.points.length < 10) {
+      return res.status(502).json({
+        error: 'Não foi possível carregar dados históricos suficientes do Yahoo Finance/Brapi para este período.',
+        failedTickers,
+      });
+    }
+
+    // Re-normalize weights over valid assets
+    const rawWeightSum = validAssets.reduce((s, h) => s + (allocMap.get(h.ticker) || 1), 0);
+    const targetWeights = validAssets.map((h) => (allocMap.get(h.ticker) || 1) / rawWeightSum);
+
+    // Align common dates anchored on IBOV trading calendar
+    const closeMaps = validAssets.map((h) => new Map(h.points.map((p) => [p.date, p.close])));
+    const ibovMap = new Map(ibovHist.points.map((p) => [p.date, p.close]));
+
+    let alignedDates = ibovHist.points.map((p) => p.date);
+    // Keep only dates where all assets either have a quote or have started trading (at least after first date of each)
+    const earliestCommon = validAssets
+      .map((h) => h.points[0]?.date)
+      .filter(Boolean)
+      .sort()
+      .pop();
+
+    if (earliestCommon) {
+      alignedDates = alignedDates.filter((d) => d >= earliestCommon);
+    }
+    if (alignedDates.length < 10) {
+      // Fallback intersection of all IBOV dates that match majority of assets
+      alignedDates = ibovHist.points.map((p) => p.date);
+    }
+
+    // Forward-fill missing single-session gaps cleanly
+    const filledPrices = validAssets.map((_, aIdx) => {
+      const cmap = closeMaps[aIdx];
+      let lastKnown = validAssets[aIdx].points[0]?.close || 10;
+      return alignedDates.map((d) => {
+        const val = cmap.get(d);
+        if (typeof val === 'number' && val > 0) {
+          lastKnown = val;
+        }
+        return lastKnown;
+      });
+    });
+
+    const ibovPrices = (() => {
+      let lastIb = ibovHist.points[0]?.close || 100000;
+      return alignedDates.map((d) => {
+        const val = ibovMap.get(d);
+        if (typeof val === 'number' && val > 0) lastIb = val;
+        return lastIb;
+      });
+    })();
+
+    // Simulate Portfolio Equity Curve (Adjusted Close includes dividends/proventos!)
+    const shares = validAssets.map((_, i) => (initialCapital * targetWeights[i]) / filledPrices[i][0]);
+    const ibovBase = ibovPrices[0] || 1;
+    let prevMonth = alignedDates[0].slice(0, 7);
+
+    const series = [];
+    let portPeak = initialCapital;
+    let ibovPeak = initialCapital;
+    let maxDrawdownPort = 0;
+    let maxDrawdownIbov = 0;
+
+    const portDailyRets = [];
+    const ibovDailyRets = [];
+
+    // Monthly comparison tracking
+    const monthlyPortStart = new Map();
+    const monthlyIbovStart = new Map();
+    const monthlyPortEnd = new Map();
+    const monthlyIbovEnd = new Map();
+
+    for (let t = 0; t < alignedDates.length; t++) {
+      const dt = alignedDates[t];
+      const currMonth = dt.slice(0, 7);
+
+      // Value at day t before rebalancing
+      let portValue = 0;
+      for (let i = 0; i < validAssets.length; i++) {
+        portValue += shares[i] * filledPrices[i][t];
+      }
+
+      // Monthly rebalance at first session of each new month
+      if (rebalance === 'monthly' && currMonth !== prevMonth && t > 0) {
+        for (let i = 0; i < validAssets.length; i++) {
+          shares[i] = (portValue * targetWeights[i]) / filledPrices[i][t];
+        }
+        prevMonth = currMonth;
+      }
+
+      const ibovValue = initialCapital * (ibovPrices[t] / ibovBase);
+      const portRetPct = ((portValue - initialCapital) / initialCapital) * 100;
+      const ibovRetPct = ((ibovValue - initialCapital) / initialCapital) * 100;
+
+      if (portValue > portPeak) portPeak = portValue;
+      if (ibovValue > ibovPeak) ibovPeak = ibovValue;
+      const ddPort = ((portValue - portPeak) / portPeak) * 100;
+      const ddIbov = ((ibovValue - ibovPeak) / ibovPeak) * 100;
+      if (ddPort < maxDrawdownPort) maxDrawdownPort = ddPort;
+      if (ddIbov < maxDrawdownIbov) maxDrawdownIbov = ddIbov;
+
+      if (t > 0) {
+        const prevPortVal = series[t - 1].portfolioValue;
+        const prevIbovVal = series[t - 1].ibovValue;
+        portDailyRets.push((portValue - prevPortVal) / prevPortVal);
+        ibovDailyRets.push((ibovValue - prevIbovVal) / prevIbovVal);
+      }
+
+      if (!monthlyPortStart.has(currMonth)) {
+        monthlyPortStart.set(currMonth, portValue);
+        monthlyIbovStart.set(currMonth, ibovValue);
+      }
+      monthlyPortEnd.set(currMonth, portValue);
+      monthlyIbovEnd.set(currMonth, ibovValue);
+
+      series.push({
+        date: dt,
+        portfolioValue: Number(portValue.toFixed(2)),
+        ibovValue: Number(ibovValue.toFixed(2)),
+        portfolioReturnPct: Number(portRetPct.toFixed(2)),
+        ibovReturnPct: Number(ibovRetPct.toFixed(2)),
+        excessReturnPct: Number((portRetPct - ibovRetPct).toFixed(2)),
+        portfolioDrawdownPct: Number(ddPort.toFixed(2)),
+        ibovDrawdownPct: Number(ddIbov.toFixed(2)),
+      });
+    }
+
+    const lastPt = series[series.length - 1];
+    const tradingDays = alignedDates.length;
+    const yearsElapsed = Math.max(1 / 12, tradingDays / 252);
+
+    const calcCagr = (totalRetPct) => {
+      const ratio = 1 + totalRetPct / 100;
+      if (ratio <= 0) return -99;
+      return Number(((Math.pow(ratio, 1 / yearsElapsed) - 1) * 100).toFixed(2));
+    };
+
+    const calcAnnualVol = (rets) => {
+      if (rets.length < 2) return 0;
+      const mean = rets.reduce((s, r) => s + r, 0) / rets.length;
+      const varSum = rets.reduce((s, r) => s + (r - mean) ** 2, 0) / (rets.length - 1);
+      return Number((Math.sqrt(varSum) * Math.sqrt(252) * 100).toFixed(2));
+    };
+
+    const portCagr = calcCagr(lastPt.portfolioReturnPct);
+    const ibovCagr = calcCagr(lastPt.ibovReturnPct);
+    const portVol = calcAnnualVol(portDailyRets);
+    const ibovVol = calcAnnualVol(ibovDailyRets);
+    const riskFreeRate = 10.75; // Selic ref % a.a.
+    const sharpe =
+      portVol > 0 ? Number(((portCagr - riskFreeRate) / portVol).toFixed(2)) : 0;
+
+    // Monthly win rate vs IBOV
+    const monthsList = Array.from(monthlyPortStart.keys());
+    let monthsBeatingIbov = 0;
+    const monthlyComparison = monthsList.map((m) => {
+      const pStart = monthlyPortStart.get(m);
+      const pEnd = monthlyPortEnd.get(m);
+      const iStart = monthlyIbovStart.get(m);
+      const iEnd = monthlyIbovEnd.get(m);
+      const pMRet = ((pEnd - pStart) / pStart) * 100;
+      const iMRet = ((iEnd - iStart) / iStart) * 100;
+      if (pMRet > iMRet) monthsBeatingIbov++;
+      return {
+        month: m,
+        portfolioPct: Number(pMRet.toFixed(2)),
+        ibovPct: Number(iMRet.toFixed(2)),
+        alphaPct: Number((pMRet - iMRet).toFixed(2)),
+      };
+    });
+
+    const monthlyWinRate =
+      monthsList.length > 0 ? Number(((monthsBeatingIbov / monthsList.length) * 100).toFixed(1)) : 0;
+
+    // Asset individual breakdown
+    const assetBreakdown = validAssets.map((h, i) => {
+      const startPrice = filledPrices[i][0];
+      const endPrice = filledPrices[i][alignedDates.length - 1];
+      const assetReturnPct = Number((((endPrice - startPrice) / startPrice) * 100).toFixed(2));
+      const weightPct = Number((targetWeights[i] * 100).toFixed(1));
+      const contributionPct = Number(((assetReturnPct * weightPct) / 100).toFixed(2));
+      const finalValue = Number((shares[i] * endPrice).toFixed(2));
+      return {
+        ticker: h.ticker,
+        source: h.source,
+        weightPct,
+        startPrice: Number(startPrice.toFixed(2)),
+        endPrice: Number(endPrice.toFixed(2)),
+        assetReturnPct,
+        contributionPct,
+        finalValue,
+      };
+    });
+
+    return res.json({
+      strategyName,
+      range: customWindow ? 'custom' : range,
+      startDate: alignedDates[0],
+      endDate: alignedDates[alignedDates.length - 1],
+      tradingDays,
+      rebalance,
+      initialCapital,
+      failedTickers,
+      sourcesUsed: Array.from(new Set(validAssets.map((a) => a.source))),
+      metrics: {
+        finalPortfolioValue: lastPt.portfolioValue,
+        finalIbovValue: lastPt.ibovValue,
+        portfolioReturnPct: lastPt.portfolioReturnPct,
+        ibovReturnPct: lastPt.ibovReturnPct,
+        alphaPct: lastPt.excessReturnPct,
+        portfolioCagrPct: portCagr,
+        ibovCagrPct: ibovCagr,
+        portfolioVolatilityPct: portVol,
+        ibovVolatilityPct: ibovVol,
+        sharpeRatio: sharpe,
+        maxDrawdownPortfolioPct: Number(maxDrawdownPort.toFixed(2)),
+        maxDrawdownIbovPct: Number(maxDrawdownIbov.toFixed(2)),
+        monthlyWinRatePct: monthlyWinRate,
+        monthsCount: monthsList.length,
+      },
+      series,
+      monthlyComparison,
+      assetBreakdown,
+      updatedAt: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.error('[Backtest] Erro ao executar backtesting:', err);
+    return res.status(500).json({ error: 'Falha ao executar backtesting histórico da carteira.' });
+  }
+});
+
+app.post('/api/ai/backtest-insights', async (req, res) => {
+  const { strategyName, startDate, endDate, metrics, assetBreakdown } = req.body || {};
+  if (!metrics || !Array.isArray(assetBreakdown)) {
+    return res.status(400).json({ error: 'Dados do backtest incompletos.' });
+  }
+
+  const topContributors = [...assetBreakdown]
+    .sort((a, b) => b.contributionPct - a.contributionPct)
+    .slice(0, 3);
+  const bottomContributors = [...assetBreakdown]
+    .sort((a, b) => a.contributionPct - b.contributionPct)
+    .slice(0, 2);
+
+  const buildFallbackInsight = () => {
+    const outperf = metrics.alphaPct >= 0;
+    return {
+      resumoExecutivo: `No período de ${startDate} a ${endDate}, a estratégia "${strategyName}" obteve retorno total de ${metrics.portfolioReturnPct >= 0 ? '+' : ''}${metrics.portfolioReturnPct}% frente a ${metrics.ibovReturnPct >= 0 ? '+' : ''}${metrics.ibovReturnPct}% do Ibovespa (Alpha de ${metrics.alphaPct >= 0 ? '+' : ''}${metrics.alphaPct} p.p.), com drawdown máximo de ${metrics.maxDrawdownPortfolioPct}% e Sharpe de ${metrics.sharpeRatio}.`,
+      driversDePerformance: `Os principais vetores positivos da simulação foram ${topContributors.map((a) => `${a.ticker} (${a.assetReturnPct >= 0 ? '+' : ''}${a.assetReturnPct}%, contribuição de ${a.contributionPct} p.p.)`).join(', ')}. Na ponta oposta, ${bottomContributors.map((a) => `${a.ticker} (${a.assetReturnPct}%)`).join(' e ')} exerceram maior pressão relativa.`,
+      diagnosticoRisco: `${outperf ? 'A carteira superou o benchmark com consistência mensal de ' + metrics.monthlyWinRatePct + '%.' : 'A carteira ficou abaixo do Ibovespa no recorte analisado; avalie ampliar o horizonte ou ajustar exposição setorial.'} Volatilidade anualizada de ${metrics.portfolioVolatilityPct}% contra ${metrics.ibovVolatilityPct}% do IBOV.`,
+      sources: [{ title: 'Yahoo Finance Historical Adjusted Close B3', url: 'https://finance.yahoo.com' }],
+      grounded: false,
+    };
+  };
+
+  if (!ai || Date.now() < geminiQuotaCooldownUntil) {
+    return res.json(buildFallbackInsight());
+  }
+
+  try {
+    const prompt = `Você é um gestor quantitativo de portfólios na B3.
+Pesquise no Google Search os principais eventos macroeconômicos do Brasil e dos ativos abaixo entre ${startDate} e ${endDate} para explicar os resultados reais deste backtest:
+
+ESTRATÉGIA: ${strategyName}
+PERÍODO: ${startDate} até ${endDate}
+RETORNO CARTEIRA: ${metrics.portfolioReturnPct}% | RETORNO IBOV: ${metrics.ibovReturnPct}% | ALPHA: ${metrics.alphaPct} p.p.
+VOLATILIDADE ANUAL: ${metrics.portfolioVolatilityPct}% | MAX DRAWDOWN: ${metrics.maxDrawdownPortfolioPct}% | SHARPE: ${metrics.sharpeRatio}
+ATIVOS & RETORNOS REAIS:
+${assetBreakdown.map((a) => `- ${a.ticker} (peso ${a.weightPct}%): retorno ${a.assetReturnPct}% (contribuição ${a.contributionPct} p.p.)`).join('\n')}
+
+Retorne SOMENTE um JSON válido com:
+{
+  "resumoExecutivo": "2-3 frases explicando o desempenho frente ao Ibovespa",
+  "driversDePerformance": "2-3 frases citando eventos reais / setores / dividendos dos ativos que explicam os ganhos e perdas no período",
+  "diagnosticoRisco": "2 frases sobre relação retorno/risco, drawdown e recomendação de balanceamento"
+}`;
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-4-hydrogen',
+      contents: prompt,
+      config: {
+        tools: [{ googleSearch: {} }],
+      },
+    });
+
+    const rawText = (response.text || '').trim();
+    const jsonMatch = rawText.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) throw new Error('JSON inválido');
+    const parsed = JSON.parse(jsonMatch[0]);
+
+    const rawChunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks;
+    const sources = [];
+    if (Array.isArray(rawChunks)) {
+      for (const chunk of rawChunks) {
+        if (chunk.web?.uri && chunk.web?.title) {
+          sources.push({ title: chunk.web.title, url: chunk.web.uri });
+        }
+      }
+    }
+
+    return res.json({
+      resumoExecutivo: parsed.resumoExecutivo || buildFallbackInsight().resumoExecutivo,
+      driversDePerformance: parsed.driversDePerformance || buildFallbackInsight().driversDePerformance,
+      diagnosticoRisco: parsed.diagnosticoRisco || buildFallbackInsight().diagnosticoRisco,
+      sources: sources.length > 0 ? sources.slice(0, 5) : buildFallbackInsight().sources,
+      grounded: true,
+    });
+  } catch (err) {
+    const errStr = String(err?.message || '');
+    if (errStr.includes('429') || errStr.includes('quota') || errStr.includes('RESOURCE_EXHAUSTED')) {
+      geminiQuotaCooldownUntil = Date.now() + 1000 * 60 * 60;
+    }
+    return res.json(buildFallbackInsight());
   }
 });
 

@@ -256,6 +256,16 @@ export const AIPortfolioBuilder: React.FC<AIPortfolioBuilderProps> = ({
   };
 
   useEffect(() => {
+    if (portfolioData && Array.isArray(portfolioData.ativos) && portfolioData.ativos.length > 0) {
+      try {
+        localStorage.setItem('b3_alpha_last_ai_portfolio_v1', JSON.stringify(portfolioData));
+      } catch {
+        // Ignore storage quota errors
+      }
+    }
+  }, [portfolioData]);
+
+  useEffect(() => {
     handleGeneratePortfolio();
   }, [portfolioType]);
 

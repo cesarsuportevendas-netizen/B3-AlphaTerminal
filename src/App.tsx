@@ -42,6 +42,7 @@ import { GoogleDriveManager } from './components/GoogleDriveManager';
 import { GmailManager } from './components/GmailManager';
 import { AuthGate } from './components/AuthGate';
 import { CorrelationMatrix } from './components/CorrelationMatrix';
+import { AIStrategyBacktest } from './components/AIStrategyBacktest';
 import { useAuth } from './context/AuthContext';
 import { exportToExcel, exportToCSV } from './utils/excelParser';
 import { DEFAULT_B3_DATA } from './data/defaultB3Data';
@@ -97,6 +98,7 @@ export default function App() {
     smartmoney: 'Tubarões & Fluxo',
     'ai-forecast': 'Previsões IA & Trades',
     correlation: 'Matriz de Correlação',
+    backtest: 'Backtesting IA vs IBOV',
     'custom-portfolio': 'Minha Carteira',
     portfolios: 'Carteiras IA & Renda',
     alerts: 'Alertas',
@@ -728,6 +730,11 @@ export default function App() {
               stocks={stocks}
               filteredStocks={filteredStocks}
             />
+          )}
+
+          {/* Backtesting de Estratégias IA vs IBOV */}
+          {activeTab === 'backtest' && (
+            <AIStrategyBacktest stocks={stocks} />
           )}
 
           {/* Minha Carteira */}
