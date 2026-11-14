@@ -91,7 +91,6 @@ export const AdminManager: React.FC = () => {
     isAdmin,
     getAdminAuthHeaders,
     loginWithAdminCredentials,
-    loginWithGoogle,
   } = useAuth();
 
   const [firestoreUsers, setFirestoreUsers] = useState<UserProfile[]>([]);
@@ -790,7 +789,7 @@ export const AdminManager: React.FC = () => {
             <div>
               <div className="font-bold">Revalidação de Segurança Necessária</div>
               <div className="text-purple-300/80 mt-0.5">
-                Para aprovar membros com segurança no servidor, confirme suas credenciais administrativas de Wdracma ou conecte a conta Google Admin.
+                Para aprovar membros com segurança no servidor, confirme suas credenciais administrativas de Wdracma.
               </div>
             </div>
           </div>
@@ -820,13 +819,6 @@ export const AdminManager: React.FC = () => {
               className="px-3.5 py-1.5 bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs rounded-lg transition-colors cursor-pointer disabled:opacity-60"
             >
               {reauthLoading ? 'Validando...' : 'Validar Sessão'}
-            </button>
-            <button
-              type="button"
-              onClick={() => loginWithGoogle()}
-              className="px-3.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold text-xs rounded-lg border border-slate-700 transition-colors cursor-pointer"
-            >
-              Conectar Google Admin
             </button>
           </form>
         </div>
@@ -1339,13 +1331,13 @@ export const AdminManager: React.FC = () => {
 
             <form onSubmit={handleAddPreAuthUser} className="space-y-3 text-xs">
               <div>
-                <label className="block text-slate-300 font-medium mb-1">Email da Conta Google *</label>
+                <label className="block text-slate-300 font-medium mb-1">E-mail do Membro *</label>
                 <input
                   type="email"
                   required
                   value={newEmail}
                   onChange={(e) => setNewEmail(e.target.value)}
-                  placeholder="exemplo@gmail.com"
+                  placeholder="exemplo@email.com"
                   className="w-full p-2 bg-slate-950 border border-slate-800 rounded-lg text-white placeholder-slate-600 focus:outline-hidden focus:border-emerald-500"
                 />
               </div>

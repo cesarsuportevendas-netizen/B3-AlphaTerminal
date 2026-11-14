@@ -108,8 +108,6 @@ interface AuthContextType {
   isMember: boolean;
   loading: boolean;
   error: string | null;
-  loginWithGoogle: () => Promise<UserProfile | null>;
-  loginWithBasicGoogle: () => Promise<UserProfile | null>;
   connectGoogleDrive: () => Promise<string | null>;
   disconnectGoogleDrive: () => void;
   connectGmail: () => Promise<string | null>;
@@ -522,8 +520,16 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         setGmailAccountEmail(null);
       }
 
-      // If connecting Google Drive while logged in as Wdracma Admin or Email member, preserve the active session profile
+      // If connecting Google Drive/Gmail while logged in as Wdracma Admin or Email member, preserve the active session profile
       if (isConnectingDriveRef.current || (currentUser && (adminSessionRef.current || emailTokenRef.current))) {
+        setLoading(false);
+        return;
+      }
+
+      if (currentUser && !adminSessionRef.current && !emailTokenRef.current) {
+        await signOut(auth).catch(() => {});
+        setUser(null);
+        setUserProfile(null);
         setLoading(false);
         return;
       }
@@ -627,54 +633,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     return () => clearInterval(timer);
   }, [user, emailToken, userProfile, adminSession, fetchMemberStatusFromServer, fetchEmailMemberProfile]);
-
-  const executeGooglePopup = async (useBasicOnly: boolean): Promise<UserProfile | null> => {
-    setError(null);
-    try {
-      const provider = buildGoogleOAuthProvider({
-        basicOnly: useBasicOnly,
-        forceConsent: false,
-      });
-      const result = await signInWithPopup(auth, provider);
-      const credential = GoogleAuthProvider.credentialFromResult(result);
-      if (credential?.accessToken && !useBasicOnly) {
-        const mail = result.user?.email || null;
-        const scopeInfo = await inspectGrantedOAuthScopes(credential.accessToken);
-        if (scopeInfo.hasDriveScope) {
-          setDriveAccessToken(credential.accessToken, mail);
-          setDriveAccessTokenState(credential.accessToken);
-          setDriveAccountEmail(mail);
-        }
-        if (scopeInfo.hasGmailScope) {
-          setGmailAccessToken(credential.accessToken, mail);
-          setGmailAccessTokenState(credential.accessToken);
-          setGmailAccountEmail(mail);
-        }
-      }
-      try {
-        localStorage.removeItem(EMAIL_STORAGE_KEY);
-      } catch {}
-      setEmailToken(null);
-      emailTokenRef.current = null;
-      const profile = await fetchOrCreateProfile(result.user);
-      setUser(result.user);
-      setUserProfile(profile);
-      return profile;
-    } catch (err: unknown) {
-      const msg = formatFirebaseAuthError(err);
-      setError(msg);
-      console.error('Login error:', err);
-      return null;
-    }
-  };
-
-  const loginWithGoogle = async (): Promise<UserProfile | null> => {
-    return executeGooglePopup(false);
-  };
-
-  const loginWithBasicGoogle = async (): Promise<UserProfile | null> => {
-    return executeGooglePopup(true);
-  };
 
   const connectGoogleDrive = useCallback(async (): Promise<string | null> => {
     isConnectingDriveRef.current = true;
@@ -1136,8 +1094,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         isMember,
         loading,
         error,
-        loginWithGoogle,
-        loginWithBasicGoogle,
         connectGoogleDrive,
         disconnectGoogleDrive,
         connectGmail,

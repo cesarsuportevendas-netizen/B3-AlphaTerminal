@@ -2042,8 +2042,7 @@ app.post('/api/members/email/init', (req, res) => {
     cleanEmail === 'wdracma@alphaterminal.admin'
   ) {
     return res.status(403).json({
-      error:
-        'Contas de Administrador Master devem entrar via Conta Google ou Login Administrativo.',
+      error: 'Contas de Administrador Master devem entrar pela aba Admin.',
     });
   }
 
@@ -2052,7 +2051,7 @@ app.post('/api/members/email/init', (req, res) => {
 
   if (existing && existing.role === 'admin' && (!existing.hasPassword || !existing.passwordHash)) {
     return res.status(403).json({
-      error: 'Esta conta administrativa requer login via Conta Google.',
+      error: 'Esta conta administrativa deve entrar pela aba Admin.',
     });
   }
 

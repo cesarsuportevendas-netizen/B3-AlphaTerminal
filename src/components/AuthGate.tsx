@@ -22,7 +22,6 @@ import {
   ArrowRight,
 } from 'lucide-react';
 import { useAuth, BOOTSTRAP_ADMIN_EMAIL } from '../context/AuthContext';
-import { UnauthorizedDomainHelp } from './UnauthorizedDomainHelp';
 
 interface AuthGateProps {
   children: React.ReactNode;
@@ -36,9 +35,6 @@ export const AuthGate: React.FC<AuthGateProps> = ({ children, onOpenLoginModal }
     emailToken,
     isAdmin,
     loading,
-    error: authError,
-    loginWithGoogle,
-    loginWithBasicGoogle,
     loginWithEmailStart,
     loginWithEmailPassword,
     loginWithAdminCredentials,
@@ -52,7 +48,6 @@ export const AuthGate: React.FC<AuthGateProps> = ({ children, onOpenLoginModal }
   const [adminPassword, setAdminPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [adminError, setAdminError] = useState<string | null>(null);
-  const [googleError, setGoogleError] = useState<string | null>(null);
 
   // Email login & registration state
   const [emailInput, setEmailInput] = useState('');
@@ -81,39 +76,6 @@ export const AuthGate: React.FC<AuthGateProps> = ({ children, onOpenLoginModal }
       console.error(e);
     } finally {
       setTimeout(() => setIsRefreshing(false), 600);
-    }
-  };
-
-  const handleGoogleLoginClick = async () => {
-    setIsLoggingIn(true);
-    setAdminError(null);
-    setEmailError(null);
-    setEmailNotice(null);
-    setGoogleError(null);
-    try {
-      const prof = await loginWithGoogle();
-      if (!prof) {
-        setGoogleError(null);
-      }
-    } catch (e) {
-      setGoogleError(e instanceof Error ? e.message : 'Falha na autenticação com Google.');
-    } finally {
-      setIsLoggingIn(false);
-    }
-  };
-
-  const handleBasicGoogleLoginClick = async () => {
-    setIsLoggingIn(true);
-    setAdminError(null);
-    setEmailError(null);
-    setEmailNotice(null);
-    setGoogleError(null);
-    try {
-      await loginWithBasicGoogle();
-    } catch (e) {
-      setGoogleError(e instanceof Error ? e.message : 'Falha na autenticação básica com Google.');
-    } finally {
-      setIsLoggingIn(false);
     }
   };
 
@@ -288,7 +250,7 @@ export const AuthGate: React.FC<AuthGateProps> = ({ children, onOpenLoginModal }
               </span>
             </h1>
             <p className="text-sm sm:text-base text-slate-300 leading-relaxed max-w-xl mx-auto">
-              Para acessar o terminal quantitativo, valuations de Graham e Bazin, rastreador de fluxo dos tubarões e integração com Google Drive e Gmail, entre com seu e-mail e senha cadastrada ou conta Google.
+              Para acessar o terminal quantitativo, valuations de Graham e Bazin, rastreador de fluxo dos tubarões e integração com Google Drive e Gmail, entre com seu e-mail e senha cadastrada.
             </p>
           </div>
 
@@ -303,7 +265,6 @@ export const AuthGate: React.FC<AuthGateProps> = ({ children, onOpenLoginModal }
                   setAdminError(null);
                   setEmailError(null);
                   setEmailNotice(null);
-                  setGoogleError(null);
                 }}
                 className={`py-2 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
                   authTab === 'login'
@@ -322,7 +283,6 @@ export const AuthGate: React.FC<AuthGateProps> = ({ children, onOpenLoginModal }
                   setAdminError(null);
                   setEmailError(null);
                   setEmailNotice(null);
-                  setGoogleError(null);
                 }}
                 className={`py-2 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
                   authTab === 'register'
@@ -341,7 +301,6 @@ export const AuthGate: React.FC<AuthGateProps> = ({ children, onOpenLoginModal }
                   setAdminError(null);
                   setEmailError(null);
                   setEmailNotice(null);
-                  setGoogleError(null);
                 }}
                 className={`py-2 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
                   authTab === 'admin'
@@ -443,62 +402,6 @@ export const AuthGate: React.FC<AuthGateProps> = ({ children, onOpenLoginModal }
                     Primeiro acesso por e-mail? Cadastrar nova conta e senha
                   </button>
                 </div>
-
-                {/* Divider */}
-                <div className="relative flex items-center py-1">
-                  <div className="flex-grow border-t border-slate-800" />
-                  <span className="shrink mx-3 text-[10px] uppercase tracking-wider font-mono text-slate-500">
-                    ou entre com Google
-                  </span>
-                  <div className="flex-grow border-t border-slate-800" />
-                </div>
-
-                <button
-                  type="button"
-                  onClick={handleGoogleLoginClick}
-                  disabled={isLoggingIn}
-                  className="w-full flex items-center justify-center gap-3 px-5 py-3 bg-white hover:bg-slate-100 text-slate-900 font-bold text-xs rounded-xl transition-all shadow-lg hover:shadow-xl cursor-pointer disabled:opacity-60"
-                >
-                  <svg className="w-4 h-4 shrink-0" viewBox="0 0 48 48">
-                    <path
-                      fill="#EA4335"
-                      d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"
-                    />
-                    <path
-                      fill="#4285F4"
-                      d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"
-                    />
-                    <path
-                      fill="#FBBC05"
-                      d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"
-                    />
-                    <path
-                      fill="#34A853"
-                      d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"
-                    />
-                  </svg>
-                  <span>{isLoggingIn ? 'Conectando...' : 'Sign in with Google / Conta Google'}</span>
-                </button>
-
-                {(googleError || authError) && (
-                  <div className="space-y-2">
-                    <div className="p-3 rounded-lg bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs flex items-start gap-2">
-                      <AlertCircle className="w-4 h-4 shrink-0 text-rose-400 mt-0.5" />
-                      <span className="break-words min-w-0">{googleError || authError}</span>
-                    </div>
-                    <UnauthorizedDomainHelp errorMessage={googleError || authError} />
-                    {(googleError || authError || '').includes('Workspace') && (
-                      <button
-                        type="button"
-                        onClick={handleBasicGoogleLoginClick}
-                        disabled={isLoggingIn}
-                        className="w-full py-2 px-3 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-[11px] font-semibold rounded-lg transition-colors cursor-pointer disabled:opacity-60"
-                      >
-                        Entrar apenas com Conta Google básica (sem Drive/Gmail)
-                      </button>
-                    )}
-                  </div>
-                )}
               </div>
             )}
 
@@ -572,61 +475,6 @@ export const AuthGate: React.FC<AuthGateProps> = ({ children, onOpenLoginModal }
                     </div>
                   </div>
                 </form>
-
-                <div className="relative flex items-center py-1">
-                  <div className="flex-grow border-t border-slate-800" />
-                  <span className="shrink mx-3 text-[10px] uppercase tracking-wider font-mono text-slate-500">
-                    ou cadastre com Google
-                  </span>
-                  <div className="flex-grow border-t border-slate-800" />
-                </div>
-
-                <button
-                  type="button"
-                  onClick={handleGoogleLoginClick}
-                  disabled={isLoggingIn}
-                  className="w-full flex items-center justify-center gap-3 px-5 py-3 bg-white hover:bg-slate-100 text-slate-900 font-bold text-xs rounded-xl transition-all shadow-lg hover:shadow-xl cursor-pointer disabled:opacity-60"
-                >
-                  <svg className="w-4 h-4 shrink-0" viewBox="0 0 48 48">
-                    <path
-                      fill="#EA4335"
-                      d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"
-                    />
-                    <path
-                      fill="#4285F4"
-                      d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"
-                    />
-                    <path
-                      fill="#FBBC05"
-                      d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"
-                    />
-                    <path
-                      fill="#34A853"
-                      d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"
-                    />
-                  </svg>
-                  <span>{isLoggingIn ? 'Conectando...' : 'Cadastrar com Conta Google'}</span>
-                </button>
-
-                {(googleError || authError) && (
-                  <div className="space-y-2">
-                    <div className="p-3 rounded-lg bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs flex items-start gap-2">
-                      <AlertCircle className="w-4 h-4 shrink-0 text-rose-400 mt-0.5" />
-                      <span className="break-words min-w-0">{googleError || authError}</span>
-                    </div>
-                    <UnauthorizedDomainHelp errorMessage={googleError || authError} />
-                    {(googleError || authError || '').includes('Workspace') && (
-                      <button
-                        type="button"
-                        onClick={handleBasicGoogleLoginClick}
-                        disabled={isLoggingIn}
-                        className="w-full py-2 px-3 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-[11px] font-semibold rounded-lg transition-colors cursor-pointer disabled:opacity-60"
-                      >
-                        Cadastrar apenas com Conta Google básica (sem Drive/Gmail)
-                      </button>
-                    )}
-                  </div>
-                )}
               </div>
             )}
 
@@ -790,9 +638,7 @@ export const AuthGate: React.FC<AuthGateProps> = ({ children, onOpenLoginModal }
                 Cadastre sua Senha de Acesso
               </h2>
               <p className="text-xs text-slate-400 leading-relaxed">
-                {user
-                  ? 'Para finalizar sua inscrição com a conta Google e enviar sua solicitação para análise, crie uma senha pessoal.'
-                  : 'Para concluir seu acesso por e-mail e enviar sua solicitação para análise do administrador, cadastre uma senha pessoal.'}
+                Para concluir seu acesso por e-mail e enviar sua solicitação para análise do administrador, cadastre uma senha pessoal.
               </p>
             </div>
 

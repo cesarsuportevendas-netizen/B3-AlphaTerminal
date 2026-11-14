@@ -292,7 +292,7 @@ export const Header: React.FC<HeaderProps> = ({
             <button
               onClick={onOpenLoginModal}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-200 bg-slate-800 hover:bg-slate-700 border border-slate-700 hover:border-emerald-500/50 hover:text-white rounded-md transition-all cursor-pointer whitespace-nowrap shadow-xs"
-              title="Entrar na Área de Membros com Conta Google"
+              title="Entrar na Área de Membros"
             >
               <User className="w-3.5 h-3.5 text-emerald-400" />
               <span>Login Membros</span>
