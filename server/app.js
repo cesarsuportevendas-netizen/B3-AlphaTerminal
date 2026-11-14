@@ -1538,6 +1538,953 @@ async function enrichSingleTickerOnline(ticker, tables) {
   return merged;
 }
 
+// ============================================================================
+// Historical Market Movement & Correlation Engine (Yahoo Finance + Brapi)
+// ============================================================================
+const HISTORY_CACHE_TTL_MS = 15 * 60 * 1000;
+const historicalSeriesCache = new Map();
+
+function normalizeYahooRange(raw) {
+  if (raw === '1mo' || raw === '3mo' || raw === '6mo' || raw === '1y') return raw;
+  return '6mo';
+}
+
+function toIsoDateStr(unixSeconds) {
+  const d = new Date(unixSeconds * 1000);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toISOString().slice(0, 10);
+}
+
+async function fetchYahooDailyHistory(tickerOrSymbol, range = '6mo') {
+  const cleanRange = normalizeYahooRange(range);
+  const symbol = tickerOrSymbol.startsWith('^')
+    ? tickerOrSymbol
+    : `${normalizeTickerSymbol(tickerOrSymbol)}.SA`;
+  const cacheKey = `${symbol}:${cleanRange}`;
+  const cached = historicalSeriesCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.data;
+  }
+
+  for (const host of ['query1.finance.yahoo.com', 'query2.finance.yahoo.com']) {
+    try {
+      const url = `https://${host}/v8/finance/chart/${encodeURIComponent(symbol)}?range=${cleanRange}&interval=1d&includeAdjustedClose=true`;
+      const text = await fetchTextUtf8(
+        url,
+        {
+          Accept: 'application/json',
+        },
+        6000
+      );
+      const json = JSON.parse(text);
+      const result = json?.chart?.result?.[0];
+      const timestamps = result?.timestamp;
+      const quote = result?.indicators?.quote?.[0];
+      const adjCloseArr = result?.indicators?.adjclose?.[0]?.adjclose;
+
+      if (!Array.isArray(timestamps) || !quote || !Array.isArray(quote.close)) {
+        continue;
+      }
+
+      const byDate = new Map();
+      for (let i = 0; i < timestamps.length; i++) {
+        const date = toIsoDateStr(timestamps[i]);
+        const close =
+          typeof adjCloseArr?.[i] === 'number' && Number.isFinite(adjCloseArr[i]) && adjCloseArr[i] > 0
+            ? adjCloseArr[i]
+            : quote.close[i];
+        const open = quote.open?.[i];
+        const high = quote.high?.[i];
+        const low = quote.low?.[i];
+        const volume = quote.volume?.[i] ?? 0;
+
+        if (!date || typeof close !== 'number' || !Number.isFinite(close) || close <= 0) {
+          continue;
+        }
+        byDate.set(date, {
+          date,
+          open: typeof open === 'number' && Number.isFinite(open) && open > 0 ? Number(open.toFixed(2)) : Number(close.toFixed(2)),
+          high: typeof high === 'number' && Number.isFinite(high) && high > 0 ? Number(high.toFixed(2)) : Number(close.toFixed(2)),
+          low: typeof low === 'number' && Number.isFinite(low) && low > 0 ? Number(low.toFixed(2)) : Number(close.toFixed(2)),
+          close: Number(close.toFixed(2)),
+          volume: typeof volume === 'number' && Number.isFinite(volume) ? volume : 0,
+        });
+      }
+
+      const points = Array.from(byDate.values()).sort((a, b) => a.date.localeCompare(b.date));
+      if (points.length >= 10) {
+        const payload = {
+          symbol,
+          ticker: tickerOrSymbol.startsWith('^') ? tickerOrSymbol : normalizeTickerSymbol(tickerOrSymbol),
+          source: 'Yahoo Finance',
+          points,
+        };
+        historicalSeriesCache.set(cacheKey, {
+          expiresAt: Date.now() + HISTORY_CACHE_TTL_MS,
+          data: payload,
+        });
+        return payload;
+      }
+    } catch {
+      // Try next host or Brapi fallback
+    }
+  }
+  return null;
+}
+
+async function fetchBrapiDailyHistory(ticker, range = '6mo') {
+  const cleanTicker = normalizeTickerSymbol(ticker);
+  if (!cleanTicker) return null;
+  const cleanRange = normalizeYahooRange(range);
+  const cacheKey = `BRAPI:${cleanTicker}:${cleanRange}`;
+  const cached = historicalSeriesCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.data;
+  }
+
+  try {
+    const token = process.env.BRAPI_TOKEN;
+    const url = `https://brapi.dev/api/quote/${encodeURIComponent(cleanTicker)}?range=${cleanRange}&interval=1d`;
+    const headers = token ? { Authorization: `Bearer ${token}` } : {};
+    const text = await fetchTextUtf8(url, headers, 5500);
+    const json = JSON.parse(text);
+    const hist = json?.results?.[0]?.historicalDataPrice;
+    if (!Array.isArray(hist) || hist.length < 10) return null;
+
+    const byDate = new Map();
+    for (const row of hist) {
+      const date = typeof row.date === 'number' ? toIsoDateStr(row.date) : null;
+      const close = row.adjustedClose > 0 ? row.adjustedClose : row.close;
+      if (!date || typeof close !== 'number' || !Number.isFinite(close) || close <= 0) continue;
+      byDate.set(date, {
+        date,
+        open: typeof row.open === 'number' && row.open > 0 ? Number(row.open.toFixed(2)) : Number(close.toFixed(2)),
+        high: typeof row.high === 'number' && row.high > 0 ? Number(row.high.toFixed(2)) : Number(close.toFixed(2)),
+        low: typeof row.low === 'number' && row.low > 0 ? Number(row.low.toFixed(2)) : Number(close.toFixed(2)),
+        close: Number(close.toFixed(2)),
+        volume: typeof row.volume === 'number' ? row.volume : 0,
+      });
+    }
+
+    const points = Array.from(byDate.values()).sort((a, b) => a.date.localeCompare(b.date));
+    if (points.length < 10) return null;
+
+    const payload = {
+      symbol: `${cleanTicker}.SA`,
+      ticker: cleanTicker,
+      source: 'Brapi B3',
+      points,
+    };
+    historicalSeriesCache.set(cacheKey, {
+      expiresAt: Date.now() + HISTORY_CACHE_TTL_MS,
+      data: payload,
+    });
+    return payload;
+  } catch {
+    return null;
+  }
+}
+
+async function fetchAssetDailyHistory(tickerOrSymbol, range = '6mo') {
+  const yahoo = await fetchYahooDailyHistory(tickerOrSymbol, range);
+  if (yahoo) return yahoo;
+  if (!tickerOrSymbol.startsWith('^')) {
+    return await fetchBrapiDailyHistory(tickerOrSymbol, range);
+  }
+  return null;
+}
+
+function computeDailyReturnsMap(points) {
+  const returnsMap = new Map();
+  const closeMap = new Map();
+  for (let i = 0; i < points.length; i++) {
+    closeMap.set(points[i].date, points[i].close);
+    if (i > 0 && points[i - 1].close > 0) {
+      const r = (points[i].close - points[i - 1].close) / points[i - 1].close;
+      if (Number.isFinite(r) && Math.abs(r) < 0.65) {
+        returnsMap.set(points[i].date, r);
+      }
+    }
+  }
+  return { returnsMap, closeMap };
+}
+
+function pearsonCorrelation(arrA, arrB) {
+  const n = arrA.length;
+  if (n < 5) return null;
+  let sumA = 0;
+  let sumB = 0;
+  for (let i = 0; i < n; i++) {
+    sumA += arrA[i];
+    sumB += arrB[i];
+  }
+  const meanA = sumA / n;
+  const meanB = sumB / n;
+  let num = 0;
+  let denA = 0;
+  let denB = 0;
+  for (let i = 0; i < n; i++) {
+    const da = arrA[i] - meanA;
+    const db = arrB[i] - meanB;
+    num += da * db;
+    denA += da * da;
+    denB += db * db;
+  }
+  const den = Math.sqrt(denA * denB);
+  if (den <= 1e-12) return 0;
+  return Math.max(-1, Math.min(1, Number((num / den).toFixed(4))));
+}
+
+function computeAssetStats(points, returnsMap, ibovReturnsMap) {
+  const firstClose = points[0]?.close || 1;
+  const lastClose = points[points.length - 1]?.close || firstClose;
+  const periodReturnPct = Number((((lastClose - firstClose) / firstClose) * 100).toFixed(2));
+
+  const rets = Array.from(returnsMap.values());
+  let mean = 0;
+  for (const r of rets) mean += r;
+  mean = rets.length > 0 ? mean / rets.length : 0;
+
+  let variance = 0;
+  for (const r of rets) variance += (r - mean) ** 2;
+  const stdDaily = rets.length > 1 ? Math.sqrt(variance / (rets.length - 1)) : 0;
+  const annualizedVolPct = Number((stdDaily * Math.sqrt(252) * 100).toFixed(2));
+
+  let peak = -Infinity;
+  let maxDd = 0;
+  for (const pt of points) {
+    if (pt.close > peak) peak = pt.close;
+    const dd = peak > 0 ? (pt.close - peak) / peak : 0;
+    if (dd < maxDd) maxDd = dd;
+  }
+  const maxDrawdownPct = Number((maxDd * 100).toFixed(2));
+
+  let betaIbov = null;
+  if (ibovReturnsMap && ibovReturnsMap.size > 5) {
+    const assetPairs = [];
+    const benchPairs = [];
+    for (const [dt, rAsset] of returnsMap.entries()) {
+      const rBench = ibovReturnsMap.get(dt);
+      if (typeof rBench === 'number') {
+        assetPairs.push(rAsset);
+        benchPairs.push(rBench);
+      }
+    }
+    if (assetPairs.length >= 10) {
+      const n = assetPairs.length;
+      const meanA = assetPairs.reduce((s, v) => s + v, 0) / n;
+      const meanB = benchPairs.reduce((s, v) => s + v, 0) / n;
+      let cov = 0;
+      let varB = 0;
+      for (let i = 0; i < n; i++) {
+        cov += (assetPairs[i] - meanA) * (benchPairs[i] - meanB);
+        varB += (benchPairs[i] - meanB) ** 2;
+      }
+      if (varB > 1e-12) {
+        betaIbov = Number((cov / varB).toFixed(2));
+      }
+    }
+  }
+
+  return {
+    lastClose: Number(lastClose.toFixed(2)),
+    periodReturnPct,
+    annualizedVolPct,
+    maxDrawdownPct,
+    betaIbov,
+    observations: points.length,
+  };
+}
+
+app.post('/api/stocks/correlation-history', async (req, res) => {
+  try {
+    const rawTickers = Array.isArray(req.body?.tickers) ? req.body.tickers : [];
+    const range = normalizeYahooRange(req.body?.range);
+    const uniqueTickers = Array.from(
+      new Set(rawTickers.map((t) => normalizeTickerSymbol(t)).filter((t) => t.length >= 4))
+    ).slice(0, 15);
+
+    if (uniqueTickers.length < 2) {
+      return res
+        .status(400)
+        .json({ error: 'Informe pelo menos 2 ativos válidos da B3 para calcular a matriz de correlação.' });
+    }
+
+    const [ibovHist, ...assetHistResults] = await Promise.all([
+      fetchAssetDailyHistory('^BVSP', range),
+      ...uniqueTickers.map((t) => fetchAssetDailyHistory(t, range)),
+    ]);
+
+    const validHistories = assetHistResults.filter((h) => h && h.points && h.points.length >= 10);
+    const failedTickers = uniqueTickers.filter(
+      (t) => !validHistories.some((h) => h.ticker === t)
+    );
+
+    if (validHistories.length < 2) {
+      return res.status(502).json({
+        error: 'Não foi possível obter séries históricas suficientes dos portais financeiros para estes ativos.',
+        failedTickers,
+      });
+    }
+
+    const ibovReturns = ibovHist ? computeDailyReturnsMap(ibovHist.points) : null;
+
+    const prepared = validHistories.map((h) => {
+      const { returnsMap, closeMap } = computeDailyReturnsMap(h.points);
+      const stats = computeAssetStats(
+        h.points,
+        returnsMap,
+        ibovReturns ? ibovReturns.returnsMap : null
+      );
+      return {
+        ticker: h.ticker,
+        source: h.source,
+        points: h.points,
+        returnsMap,
+        closeMap,
+        stats,
+      };
+    });
+
+    const tickers = prepared.map((p) => p.ticker);
+    const n = prepared.length;
+    const matrix = Array.from({ length: n }, () => Array(n).fill(1));
+    const sampleSizes = Array.from({ length: n }, () => Array(n).fill(0));
+    const pairSeries = {};
+
+    let sumCorr = 0;
+    let pairCount = 0;
+    let lowestPair = null;
+    let highestPair = null;
+
+    for (let i = 0; i < n; i++) {
+      sampleSizes[i][i] = prepared[i].returnsMap.size;
+      for (let j = i + 1; j < n; j++) {
+        const arrA = [];
+        const arrB = [];
+        const commonPairDates = [];
+        for (const [dt, rA] of prepared[i].returnsMap.entries()) {
+          const rB = prepared[j].returnsMap.get(dt);
+          if (typeof rB === 'number') {
+            arrA.push(rA);
+            arrB.push(rB);
+            commonPairDates.push(dt);
+          }
+        }
+        const corr = pearsonCorrelation(arrA, arrB) ?? 0;
+        matrix[i][j] = corr;
+        matrix[j][i] = corr;
+        sampleSizes[i][j] = commonPairDates.length;
+        sampleSizes[j][i] = commonPairDates.length;
+
+        const key = `${tickers[i]}::${tickers[j]}`;
+        pairSeries[key] = commonPairDates.map((dt, idx) => ({
+          date: dt,
+          retA: Number((arrA[idx] * 100).toFixed(3)),
+          retB: Number((arrB[idx] * 100).toFixed(3)),
+        }));
+
+        sumCorr += corr;
+        pairCount++;
+        if (!lowestPair || corr < lowestPair.correlation) {
+          lowestPair = { tickerA: tickers[i], tickerB: tickers[j], correlation: corr };
+        }
+        if (!highestPair || corr > highestPair.correlation) {
+          highestPair = { tickerA: tickers[i], tickerB: tickers[j], correlation: corr };
+        }
+      }
+    }
+
+    // Build unified timeline of trading dates shared across all selected assets
+    let commonDates = Array.from(prepared[0].closeMap.keys());
+    for (let i = 1; i < prepared.length; i++) {
+      const nextSet = prepared[i].closeMap;
+      const intersection = commonDates.filter((d) => nextSet.has(d));
+      if (intersection.length >= 10) {
+        commonDates = intersection;
+      }
+    }
+    commonDates.sort();
+
+    // Build Base-100 normalized movement curves on shared trading dates
+    const normalizedSeries = prepared.map((p) => {
+      const validStartDate = commonDates.find((d) => p.closeMap.has(d));
+      const baseClose = validStartDate ? p.closeMap.get(validStartDate) : p.points[0]?.close || 1;
+      let lastKnown = baseClose;
+      const values = commonDates.map((d) => {
+        const raw = p.closeMap.get(d);
+        if (typeof raw === 'number' && raw > 0) {
+          lastKnown = raw;
+        }
+        return {
+          date: d,
+          close: Number(lastKnown.toFixed(2)),
+          base100: Number(((lastKnown / baseClose) * 100).toFixed(2)),
+          returnPct: Number((((lastKnown - baseClose) / baseClose) * 100).toFixed(2)),
+        };
+      });
+      return {
+        ticker: p.ticker,
+        source: p.source,
+        values,
+      };
+    });
+
+    let ibovSeries = null;
+    if (ibovHist && commonDates.length >= 10) {
+      const ibovMap = new Map(ibovHist.points.map((pt) => [pt.date, pt.close]));
+      const startDt = commonDates.find((d) => ibovMap.has(d));
+      const baseIbov = startDt ? ibovMap.get(startDt) : ibovHist.points[0]?.close || 1;
+      let lastIbov = baseIbov;
+      ibovSeries = commonDates.map((d) => {
+        const val = ibovMap.get(d);
+        if (typeof val === 'number' && val > 0) lastIbov = val;
+        return {
+          date: d,
+          close: Number(lastIbov.toFixed(0)),
+          base100: Number(((lastIbov / baseIbov) * 100).toFixed(2)),
+          returnPct: Number((((lastIbov - baseIbov) / baseIbov) * 100).toFixed(2)),
+        };
+      });
+    }
+
+    const sourcesUsed = Array.from(new Set(prepared.map((p) => p.source)));
+
+    return res.json({
+      range,
+      updatedAt: new Date().toISOString(),
+      tickers,
+      failedTickers,
+      sourcesUsed,
+      commonDatesCount: commonDates.length,
+      commonDates,
+      matrix,
+      sampleSizes,
+      summary: {
+        averageCorrelation: pairCount > 0 ? Number((sumCorr / pairCount).toFixed(3)) : 0,
+        lowestPair,
+        highestPair,
+      },
+      assets: prepared.map((p) => ({
+        ticker: p.ticker,
+        source: p.source,
+        ...p.stats,
+      })),
+      normalizedSeries,
+      ibovSeries,
+      pairSeries,
+    });
+  } catch (err) {
+    console.error('[Correlation Matrix] Erro:', err);
+    return res.status(500).json({ error: 'Falha ao consultar histórico de mercado para a matriz de correlação.' });
+  }
+});
+
+// ============================================================================
+// Technical Trade Signals Engine (br.investing.com + TradingView + Yahoo OHLCV)
+// ============================================================================
+const TRADE_SIGNAL_CACHE_TTL_MS = 10 * 60 * 1000;
+const tradeSignalsCache = new Map();
+
+function computeOHLCVTechnicals(points) {
+  if (!Array.isArray(points) || points.length < 15) return null;
+  const closes = points.map((p) => p.close);
+  const last = points[points.length - 1];
+
+  // EMA 20
+  const k20 = 2 / 21;
+  let ema20 = closes[0];
+  for (let i = 1; i < closes.length; i++) {
+    ema20 = closes[i] * k20 + ema20 * (1 - k20);
+  }
+
+  // SMA 50 (or available length)
+  const smaWindow = closes.slice(-Math.min(50, closes.length));
+  const sma50 = smaWindow.reduce((s, v) => s + v, 0) / smaWindow.length;
+
+  // RSI 14 (Wilder)
+  let avgGain = 0;
+  let avgLoss = 0;
+  for (let i = 1; i <= 14; i++) {
+    const diff = closes[i] - closes[i - 1];
+    if (diff > 0) avgGain += diff;
+    else avgLoss += Math.abs(diff);
+  }
+  avgGain /= 14;
+  avgLoss /= 14;
+  for (let i = 15; i < closes.length; i++) {
+    const diff = closes[i] - closes[i - 1];
+    const gain = diff > 0 ? diff : 0;
+    const loss = diff < 0 ? Math.abs(diff) : 0;
+    avgGain = (avgGain * 13 + gain) / 14;
+    avgLoss = (avgLoss * 13 + loss) / 14;
+  }
+  const rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
+  const rsi14 = Number((avgLoss === 0 ? 100 : 100 - 100 / (1 + rs)).toFixed(1));
+
+  // ATR 14
+  const trs = [];
+  for (let i = 1; i < points.length; i++) {
+    const curr = points[i];
+    const prevClose = points[i - 1].close;
+    const tr = Math.max(
+      curr.high - curr.low,
+      Math.abs(curr.high - prevClose),
+      Math.abs(curr.low - prevClose)
+    );
+    trs.push(tr);
+  }
+  const recentTrs = trs.slice(-14);
+  const atr14 = recentTrs.reduce((s, v) => s + v, 0) / Math.max(1, recentTrs.length);
+
+  // Recent 22-day (1 month) high/low & Classic Pivot Points
+  const recent22 = points.slice(-Math.min(22, points.length));
+  const high22 = Math.max(...recent22.map((p) => p.high));
+  const low22 = Math.min(...recent22.map((p) => p.low));
+  const pivot = (high22 + low22 + last.close) / 3;
+  const s1 = 2 * pivot - high22;
+  const r1 = 2 * pivot - low22;
+  const s2 = pivot - (high22 - low22);
+  const r2 = pivot + (high22 - low22);
+
+  return {
+    close: last.close,
+    ema20: Number(ema20.toFixed(2)),
+    sma50: Number(sma50.toFixed(2)),
+    rsi14,
+    atr14: Number(atr14.toFixed(2)),
+    pivot: Number(pivot.toFixed(2)),
+    s1: Number(s1.toFixed(2)),
+    s2: Number(s2.toFixed(2)),
+    r1: Number(r1.toFixed(2)),
+    r2: Number(r2.toFixed(2)),
+    high22: Number(high22.toFixed(2)),
+    low22: Number(low22.toFixed(2)),
+  };
+}
+
+async function fetchTradingViewBrazilBatch(tickers) {
+  const resultMap = new Map();
+  if (!tickers || tickers.length === 0) return resultMap;
+  try {
+    const payload = {
+      symbols: {
+        tickers: tickers.map((t) => `BMFBOVESPA:${t}`),
+        query: { types: [] },
+      },
+      columns: [
+        'name',
+        'close',
+        'Recommend.All',
+        'Recommend.MA',
+        'Recommend.Other',
+        'RSI',
+        'ATR',
+        'EMA20',
+        'SMA50',
+        'Pivot.M.Classic.Middle',
+        'Pivot.M.Classic.S1',
+        'Pivot.M.Classic.S2',
+        'Pivot.M.Classic.R1',
+        'Pivot.M.Classic.R2',
+        'High.1M',
+        'Low.1M',
+      ],
+    };
+
+    const response = await fetch('https://scanner.tradingview.com/brazil/scan', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'User-Agent': ONLINE_HEADERS['User-Agent'],
+        Origin: 'https://br.tradingview.com',
+        Referer: 'https://br.tradingview.com/',
+      },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(5500),
+    });
+    if (!response.ok) return resultMap;
+    const json = await response.json();
+    if (!Array.isArray(json?.data)) return resultMap;
+
+    for (const row of json.data) {
+      const sym = String(row.s || '').replace(/^BMFBOVESPA:/i, '').toUpperCase();
+      const d = row.d;
+      if (!sym || !Array.isArray(d)) continue;
+      resultMap.set(sym, {
+        source: 'TradingView',
+        close: typeof d[1] === 'number' ? d[1] : null,
+        recommendAll: typeof d[2] === 'number' ? d[2] : null,
+        recommendMA: typeof d[3] === 'number' ? d[3] : null,
+        recommendOsc: typeof d[4] === 'number' ? d[4] : null,
+        rsi14: typeof d[5] === 'number' ? Number(d[5].toFixed(1)) : null,
+        atr14: typeof d[6] === 'number' ? Number(d[6].toFixed(2)) : null,
+        ema20: typeof d[7] === 'number' ? Number(d[7].toFixed(2)) : null,
+        sma50: typeof d[8] === 'number' ? Number(d[8].toFixed(2)) : null,
+        pivot: typeof d[9] === 'number' ? Number(d[9].toFixed(2)) : null,
+        s1: typeof d[10] === 'number' ? Number(d[10].toFixed(2)) : null,
+        s2: typeof d[11] === 'number' ? Number(d[11].toFixed(2)) : null,
+        r1: typeof d[12] === 'number' ? Number(d[12].toFixed(2)) : null,
+        r2: typeof d[13] === 'number' ? Number(d[13].toFixed(2)) : null,
+        high1M: typeof d[14] === 'number' ? Number(d[14].toFixed(2)) : null,
+        low1M: typeof d[15] === 'number' ? Number(d[15].toFixed(2)) : null,
+      });
+    }
+  } catch {
+    // Non-blocking fallback to Yahoo OHLCV + Investing search
+  }
+  return resultMap;
+}
+
+async function fetchInvestingBrTickerSignals(ticker) {
+  // 1. Direct Investing.com search API attempt
+  try {
+    const searchUrl = `https://br.investing.com/search/service/searchTopBar?search_text=${encodeURIComponent(ticker)}`;
+    const res = await fetch(searchUrl, {
+      headers: {
+        ...ONLINE_HEADERS,
+        'X-Requested-With': 'XMLHttpRequest',
+        Referer: 'https://br.investing.com/',
+      },
+      signal: AbortSignal.timeout(4000),
+    });
+    if (res.ok) {
+      const json = await res.json();
+      const equity = Array.isArray(json?.quotes)
+        ? json.quotes.find(
+            (q) =>
+              String(q.symbol || '').toUpperCase() === ticker &&
+              (String(q.exchange || '').toLowerCase().includes('b3') ||
+                String(q.exchange || '').toLowerCase().includes('saopaulo') ||
+                String(q.flag || '').toLowerCase().includes('brazil'))
+          ) || json.quotes[0]
+        : null;
+
+      if (equity?.link) {
+        const techUrl = `https://br.investing.com${equity.link}-technical`;
+        const html = await fetchTextUtf8(techUrl, { Referer: 'https://br.investing.com/' }, 4500);
+        if (html && !html.includes('Just a moment')) {
+          const summaryMatch = html.match(
+            /Resumo[^<]{0,60}(Compra Forte|Compra|Neutro|Venda Forte|Venda)/i
+          );
+          const rsiMatch = html.match(/RSI\s*\(14\)[\s\S]{0,120}?([\d.,]{2,6})/i);
+          return {
+            source: 'br.investing.com',
+            recomendacao: summaryMatch?.[1] || null,
+            rsi14: rsiMatch?.[1] ? parsePtBrNumber(rsiMatch[1]) : null,
+            url: techUrl,
+          };
+        }
+      }
+    }
+  } catch {
+    // Cloudflare or block on Investing.com direct request -> try Gemini googleSearch grounding on br.investing.com
+  }
+
+  return null;
+}
+
+async function fetchInvestingSearchGroundingBatch(tickers) {
+  const resultMap = new Map();
+  if (!ai || Date.now() < geminiQuotaCooldownUntil || tickers.length === 0) {
+    return resultMap;
+  }
+
+  try {
+    const subset = tickers.slice(0, 10);
+    const prompt = `Pesquise na internet em portais financeiros brasileiros como "br.investing.com", TradingView e InfoMoney os sinais técnicos mais recentes (Resumo Técnico, RSI 14, Suporte S1/Pivot, Resistência R1/Alvo) para os seguintes ativos da B3: ${subset.join(', ')}.
+
+Para cada ativo encontrado, retorne SOMENTE um array JSON válido no formato:
+[
+  {
+    "ticker": "PETR4",
+    "recomendacao": "Compra Forte" | "Compra" | "Neutro" | "Venda",
+    "rsi14": number | null,
+    "suporte": number | null,
+    "resistencia": number | null,
+    "pontoEntrada": number | null,
+    "stopLoss": number | null,
+    "alvo1": number | null,
+    "fonte": "br.investing.com"
+  }
+]`;
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-4-hydrogen',
+      contents: prompt,
+      config: {
+        tools: [{ googleSearch: {} }],
+      },
+    });
+
+    const rawText = (response.text || '').trim();
+    const jsonMatch = rawText.match(/\[[\s\S]*\]/);
+    if (!jsonMatch) return resultMap;
+    const parsed = JSON.parse(jsonMatch[0]);
+    if (!Array.isArray(parsed)) return resultMap;
+
+    for (const item of parsed) {
+      const sym = normalizeTickerSymbol(item?.ticker);
+      if (!sym) continue;
+      resultMap.set(sym, {
+        source: item.fonte || 'br.investing.com (Google Search)',
+        recomendacao: item.recomendacao || null,
+        rsi14: typeof item.rsi14 === 'number' && item.rsi14 > 0 && item.rsi14 < 100 ? item.rsi14 : null,
+        suporte: typeof item.suporte === 'number' && item.suporte > 0 ? item.suporte : null,
+        resistencia: typeof item.resistencia === 'number' && item.resistencia > 0 ? item.resistencia : null,
+        pontoEntrada: typeof item.pontoEntrada === 'number' && item.pontoEntrada > 0 ? item.pontoEntrada : null,
+        stopLoss: typeof item.stopLoss === 'number' && item.stopLoss > 0 ? item.stopLoss : null,
+        alvo1: typeof item.alvo1 === 'number' && item.alvo1 > 0 ? item.alvo1 : null,
+      });
+    }
+  } catch (err) {
+    const errStr = String(err?.message || '');
+    if (errStr.includes('429') || errStr.includes('quota') || errStr.includes('RESOURCE_EXHAUSTED')) {
+      geminiQuotaCooldownUntil = Date.now() + 1000 * 60 * 60;
+    }
+  }
+  return resultMap;
+}
+
+function classifyTechnicalRecommendation(tvScore, rsi, close, ema20, sma50, invRec) {
+  if (invRec && typeof invRec === 'string') {
+    return invRec;
+  }
+  if (typeof tvScore === 'number') {
+    if (tvScore >= 0.45) return 'Compra Forte';
+    if (tvScore >= 0.1) return 'Compra';
+    if (tvScore <= -0.45) return 'Venda Forte';
+    if (tvScore <= -0.1) return 'Venda';
+    return 'Neutro';
+  }
+  let score = 0;
+  if (close && ema20) score += close >= ema20 ? 1 : -1;
+  if (close && sma50) score += close >= sma50 ? 1 : -1;
+  if (rsi) {
+    if (rsi >= 55 && rsi <= 72) score += 1;
+    else if (rsi < 35) score += 1; // Oversold rebound zone
+    else if (rsi > 76) score -= 1;
+  }
+  if (score >= 2) return 'Compra Forte';
+  if (score === 1) return 'Compra';
+  if (score <= -2) return 'Venda';
+  return 'Neutro';
+}
+
+function deriveCoherentTradeSetup(ticker, tv, yahooTech, invDirect, invSearch, fallbackPrice) {
+  const price =
+    (tv?.close && tv.close > 0 && tv.close) ||
+    (yahooTech?.close && yahooTech.close > 0 && yahooTech.close) ||
+    (fallbackPrice && fallbackPrice > 0 && fallbackPrice) ||
+    null;
+
+  if (!price) return null;
+
+  const atr =
+    (tv?.atr14 && tv.atr14 > 0 && tv.atr14) ||
+    (yahooTech?.atr14 && yahooTech.atr14 > 0 && yahooTech.atr14) ||
+    Number((price * 0.025).toFixed(2));
+
+  const rsi14 =
+    (invDirect?.rsi14 && invDirect.rsi14) ||
+    (invSearch?.rsi14 && invSearch.rsi14) ||
+    (tv?.rsi14 && tv.rsi14) ||
+    (yahooTech?.rsi14 && yahooTech.rsi14) ||
+    52;
+
+  const ema20 = tv?.ema20 || yahooTech?.ema20 || price * 0.99;
+  const sma50 = tv?.sma50 || yahooTech?.sma50 || price * 0.97;
+  const s1 = invSearch?.suporte || tv?.s1 || yahooTech?.s1 || price * 0.96;
+  const s2 = tv?.s2 || yahooTech?.s2 || s1 * 0.96;
+  const r1 = invSearch?.resistencia || tv?.r1 || yahooTech?.r1 || price * 1.07;
+  const r2 = tv?.r2 || yahooTech?.r2 || r1 * 1.06;
+
+  // Ponto de Entrada Sugerido: pullback near S1 / EMA20 / 0.35*ATR below current quote
+  const rawEntryCandidates = [
+    price * 0.992,
+    ema20 > price * 0.93 && ema20 <= price ? ema20 : null,
+    s1 > price * 0.93 && s1 <= price ? (s1 + price) / 2 : null,
+    invSearch?.pontoEntrada && invSearch.pontoEntrada > price * 0.9 && invSearch.pontoEntrada <= price * 1.01
+      ? invSearch.pontoEntrada
+      : null,
+    price - 0.35 * atr,
+  ].filter((v) => typeof v === 'number' && Number.isFinite(v));
+
+  const avgEntry =
+    rawEntryCandidates.reduce((s, v) => s + v, 0) / Math.max(1, rawEntryCandidates.length);
+  const pontoEntrada = Number(
+    Math.max(price * 0.93, Math.min(price * 0.998, avgEntry)).toFixed(2)
+  );
+
+  // Stop Loss Técnico: strictly below nearby S1 support or 1.6x ATR below entry (swing-trade bounded)
+  const atrStop = pontoEntrada - Math.max(atr * 1.6, pontoEntrada * 0.032);
+  const nearSupport = s1 < pontoEntrada * 0.985 && s1 >= pontoEntrada * 0.91 ? s1 * 0.992 : atrStop;
+  let stopLoss = (atrStop + nearSupport) / 2;
+  if (invSearch?.stopLoss && invSearch.stopLoss < pontoEntrada * 0.975 && invSearch.stopLoss >= pontoEntrada * 0.90) {
+    stopLoss = (stopLoss + invSearch.stopLoss) / 2;
+  }
+  stopLoss = Number(
+    Math.max(pontoEntrada * 0.915, Math.min(pontoEntrada * 0.968, stopLoss)).toFixed(2)
+  );
+
+  const riskAmount = Math.max(0.05, pontoEntrada - stopLoss);
+
+  // Alvo 1 (Curto Prazo): nearest Pivot R1 / 2.6x ATR / >= 2.0x risk reward
+  const candidateTargets = [
+    r1 > pontoEntrada * 1.035 && r1 <= pontoEntrada * 1.22 ? r1 : null,
+    yahooTech?.high22 && yahooTech.high22 > pontoEntrada * 1.035 && yahooTech.high22 <= pontoEntrada * 1.22
+      ? yahooTech.high22
+      : null,
+    invSearch?.alvo1 && invSearch.alvo1 > pontoEntrada * 1.035 && invSearch.alvo1 <= pontoEntrada * 1.22
+      ? invSearch.alvo1
+      : null,
+    pontoEntrada + Math.max(atr * 2.8, riskAmount * 2.3),
+  ].filter((v) => typeof v === 'number' && Number.isFinite(v));
+
+  const minTarget = pontoEntrada + riskAmount * 1.9;
+  const avgTarget =
+    candidateTargets.reduce((s, v) => s + v, 0) / Math.max(1, candidateTargets.length);
+  const alvo1CurtoPrazo = Number(
+    Math.min(pontoEntrada * 1.19, Math.max(minTarget, avgTarget)).toFixed(2)
+  );
+
+  const alvo2LongoPrazo = Number(
+    Math.max(alvo1CurtoPrazo * 1.08, r2 > alvo1CurtoPrazo ? r2 : pontoEntrada * 1.24).toFixed(2)
+  );
+
+  const rewardAmount = Math.max(0.05, alvo1CurtoPrazo - pontoEntrada);
+  const rrRatio = rewardAmount / riskAmount;
+  const riscoRetorno = `1:${rrRatio.toFixed(2)}`;
+
+  const recomendacao = classifyTechnicalRecommendation(
+    tv?.recommendAll,
+    rsi14,
+    price,
+    ema20,
+    sma50,
+    invDirect?.recomendacao || invSearch?.recomendacao
+  );
+
+  let tendenciaTecnica = 'Lateral';
+  if (price >= ema20 && ema20 >= sma50) tendenciaTecnica = 'Alta';
+  else if (price >= ema20 || price >= sma50) tendenciaTecnica = 'Alta Moderada';
+  else if (price < ema20 && price < sma50) tendenciaTecnica = 'Baixa';
+
+  let padraoGrafico = `Suporte Pivô R$ ${s1.toFixed(2)} · Resistência R$ ${r1.toFixed(2)} · MME20 R$ ${ema20.toFixed(2)}`;
+  if (recomendacao.includes('Compra') && price >= ema20) {
+    padraoGrafico = `${recomendacao} acima da MME20 (R$ ${ema20.toFixed(2)}) · Pivô S1/R1: R$ ${s1.toFixed(2)} / R$ ${r1.toFixed(2)}`;
+  }
+
+  const sources = [];
+  if (invDirect) sources.push('br.investing.com');
+  if (invSearch) sources.push(invSearch.source);
+  if (tv) sources.push('TradingView');
+  if (yahooTech) sources.push('Yahoo Finance');
+
+  return {
+    papel: ticker,
+    cotacao: Number(price.toFixed(2)),
+    pontoEntrada,
+    stopLoss,
+    alvo1CurtoPrazo,
+    alvo2LongoPrazo,
+    riscoRetorno,
+    rsi14,
+    tendenciaTecnica,
+    padraoGrafico,
+    suporteTecnico: Number(s1.toFixed(2)),
+    resistenciaTecnica: Number(r1.toFixed(2)),
+    atr14: Number(atr.toFixed(2)),
+    tradeSignalRecomendacao: recomendacao,
+    tradeSignalSources: sources.length > 0 ? sources : ['Análise Técnica B3'],
+    tradeSignalUpdatedAt: new Date().toISOString(),
+  };
+}
+
+app.post('/api/stocks/trade-signals', async (req, res) => {
+  try {
+    const rawTickers = Array.isArray(req.body?.tickers) ? req.body.tickers : [];
+    const fallbackQuotes = req.body?.quotes && typeof req.body.quotes === 'object' ? req.body.quotes : {};
+    const useInvestingSearch = req.body?.useInvestingSearch !== false;
+
+    const uniqueTickers = Array.from(
+      new Set(rawTickers.map((t) => normalizeTickerSymbol(t)).filter((t) => t.length >= 4))
+    ).slice(0, 25);
+
+    if (uniqueTickers.length === 0) {
+      return res.status(400).json({ error: 'Informe ao menos um ativo válido para buscar sinais técnicos.' });
+    }
+
+    const now = Date.now();
+    const uncachedTickers = uniqueTickers.filter((t) => {
+      const hit = tradeSignalsCache.get(t);
+      return !(hit && hit.expiresAt > now);
+    });
+
+    const results = {};
+    for (const t of uniqueTickers) {
+      const hit = tradeSignalsCache.get(t);
+      if (hit && hit.expiresAt > now) {
+        results[t] = hit.data;
+      }
+    }
+
+    if (uncachedTickers.length > 0) {
+      const [tvMap, invSearchMap, histResults, invDirectResults] = await Promise.all([
+        fetchTradingViewBrazilBatch(uncachedTickers),
+        useInvestingSearch
+          ? fetchInvestingSearchGroundingBatch(uncachedTickers.slice(0, 10))
+          : Promise.resolve(new Map()),
+        Promise.all(uncachedTickers.map((t) => fetchAssetDailyHistory(t, '3mo'))),
+        useInvestingSearch
+          ? Promise.all(uncachedTickers.slice(0, 6).map((t) => fetchInvestingBrTickerSignals(t)))
+          : Promise.resolve([]),
+      ]);
+
+      uncachedTickers.forEach((ticker, idx) => {
+        const tv = tvMap.get(ticker) || null;
+        const invSearch = invSearchMap.get(ticker) || null;
+        const invDirect = idx < invDirectResults.length ? invDirectResults[idx] : null;
+        const hist = histResults[idx];
+        const yahooTech = hist?.points ? computeOHLCVTechnicals(hist.points) : null;
+        const fbPrice = typeof fallbackQuotes[ticker] === 'number' ? fallbackQuotes[ticker] : null;
+
+        const setup = deriveCoherentTradeSetup(
+          ticker,
+          tv,
+          yahooTech,
+          invDirect,
+          invSearch,
+          fbPrice
+        );
+        if (setup) {
+          results[ticker] = setup;
+          tradeSignalsCache.set(ticker, {
+            expiresAt: Date.now() + TRADE_SIGNAL_CACHE_TTL_MS,
+            data: setup,
+          });
+        }
+      });
+    }
+
+    const sourcesSet = new Set();
+    for (const item of Object.values(results)) {
+      for (const s of item.tradeSignalSources || []) {
+        sourcesSet.add(s);
+      }
+    }
+
+    return res.json({
+      updatedAt: new Date().toISOString(),
+      results,
+      sourcesUsed: Array.from(sourcesSet),
+    });
+  } catch (err) {
+    console.error('[Trade Signals] Erro ao buscar indicações online:', err);
+    return res.status(500).json({ error: 'Falha ao consultar indicações técnicas online.' });
+  }
+});
+
 app.post('/api/stocks/refresh-online', async (req, res) => {
   try {
     const rawTickers = Array.isArray(req.body?.tickers)
@@ -1554,7 +2501,10 @@ app.post('/api/stocks/refresh-online', async (req, res) => {
       return res.status(400).json({ error: 'Nenhum ticker válido informado para atualização.' });
     }
 
-    const tables = await getFundamentusTables();
+    const [tables, tvMap] = await Promise.all([
+      getFundamentusTables(),
+      fetchTradingViewBrazilBatch(uniqueTickers),
+    ]);
     const results = {};
     const sourcesSummary = {};
     let updatedCount = 0;
@@ -1568,6 +2518,36 @@ app.post('/api/stocks/refresh-online', async (req, res) => {
         try {
           const enriched = await enrichSingleTickerOnline(ticker, tables);
           if (enriched) {
+            // Also compute live technical trade setup from TradingView / Yahoo Finance OHLCV
+            const tv = tvMap.get(ticker) || null;
+            let yahooTech = null;
+            if (!tv || !tv.atr14 || !tv.s1) {
+              const hist = await fetchAssetDailyHistory(ticker, '3mo');
+              if (hist?.points) yahooTech = computeOHLCVTechnicals(hist.points);
+            }
+            const tradeSetup = deriveCoherentTradeSetup(
+              ticker,
+              tv,
+              yahooTech,
+              null,
+              null,
+              enriched.cotacao
+            );
+            if (tradeSetup) {
+              enriched.pontoEntrada = tradeSetup.pontoEntrada;
+              enriched.stopLoss = tradeSetup.stopLoss;
+              enriched.alvo1CurtoPrazo = tradeSetup.alvo1CurtoPrazo;
+              enriched.alvo2LongoPrazo = tradeSetup.alvo2LongoPrazo;
+              enriched.riscoRetorno = tradeSetup.riscoRetorno;
+              enriched.rsi14 = tradeSetup.rsi14;
+              enriched.tendenciaTecnica = tradeSetup.tendenciaTecnica;
+              enriched.padraoGrafico = tradeSetup.padraoGrafico;
+              enriched.suporteTecnico = tradeSetup.suporteTecnico;
+              enriched.resistenciaTecnica = tradeSetup.resistenciaTecnica;
+              enriched.tradeSignalRecomendacao = tradeSetup.tradeSignalRecomendacao;
+              enriched.tradeSignalSources = tradeSetup.tradeSignalSources;
+              enriched.tradeSignalUpdatedAt = tradeSetup.tradeSignalUpdatedAt;
+            }
             results[ticker] = enriched;
             updatedCount++;
             for (const src of enriched.onlineSources || []) {

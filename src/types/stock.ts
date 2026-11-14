@@ -82,6 +82,12 @@ export interface StockIndicator {
   observacoes?: string;
   onlineSources?: string[];
   onlineUpdatedAt?: string;
+  tradeSignalSources?: string[];
+  tradeSignalRecomendacao?: string;
+  tradeSignalUpdatedAt?: string;
+  suporteTecnico?: number;
+  resistenciaTecnica?: number;
+  atr14?: number;
 }
 
 export interface StockData {
@@ -124,9 +130,20 @@ export interface StockData {
   piotroskiFScore?: number;
   pontoEntrada?: number;
   stopLoss?: number;
+  alvo1CurtoPrazo?: number;
+  alvo2LongoPrazo?: number;
+  riscoRetorno?: string;
+  rsi14?: number;
+  padraoGrafico?: string;
   tendenciaTecnica?: string;
   onlineSources?: string[];
   onlineUpdatedAt?: string;
+  tradeSignalSources?: string[];
+  tradeSignalRecomendacao?: string;
+  tradeSignalUpdatedAt?: string;
+  suporteTecnico?: number;
+  resistenciaTecnica?: number;
+  atr14?: number;
 }
 
 export interface FilterState {

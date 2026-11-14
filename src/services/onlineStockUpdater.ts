@@ -50,6 +50,20 @@ interface OnlineTickerPayload {
   caixaDisponivel?: number;
   receitaLiquida12m?: number;
   lucroLiquido12m?: number;
+  pontoEntrada?: number;
+  stopLoss?: number;
+  alvo1CurtoPrazo?: number;
+  alvo2LongoPrazo?: number;
+  riscoRetorno?: string;
+  rsi14?: number;
+  tendenciaTecnica?: string;
+  padraoGrafico?: string;
+  suporteTecnico?: number;
+  resistenciaTecnica?: number;
+  atr14?: number;
+  tradeSignalRecomendacao?: string;
+  tradeSignalSources?: string[];
+  tradeSignalUpdatedAt?: string;
   onlineSources?: string[];
   onlineUpdatedAt?: string;
 }
@@ -107,6 +121,20 @@ function mergeOnlineFields(base: StockData, online: OnlineTickerPayload): StockD
     nomeEmpresa: nextNomeEmpresa,
     lpa: numOrKeep(online.lpa, nextPl && nextPl !== 0 ? Number((nextCotacao / nextPl).toFixed(2)) : base.lpa ?? null),
     vpa: numOrKeep(online.vpa, nextPvp && nextPvp !== 0 ? Number((nextCotacao / nextPvp).toFixed(2)) : base.vpa ?? null),
+    pontoEntrada: typeof online.pontoEntrada === 'number' && online.pontoEntrada > 0 ? online.pontoEntrada : base.pontoEntrada,
+    stopLoss: typeof online.stopLoss === 'number' && online.stopLoss > 0 ? online.stopLoss : base.stopLoss,
+    alvo1CurtoPrazo: typeof online.alvo1CurtoPrazo === 'number' && online.alvo1CurtoPrazo > 0 ? online.alvo1CurtoPrazo : base.alvo1CurtoPrazo,
+    alvo2LongoPrazo: typeof online.alvo2LongoPrazo === 'number' && online.alvo2LongoPrazo > 0 ? online.alvo2LongoPrazo : base.alvo2LongoPrazo,
+    riscoRetorno: online.riscoRetorno || base.riscoRetorno,
+    rsi14: typeof online.rsi14 === 'number' && online.rsi14 > 0 ? online.rsi14 : base.rsi14,
+    tendenciaTecnica: online.tendenciaTecnica || base.tendenciaTecnica,
+    padraoGrafico: online.padraoGrafico || base.padraoGrafico,
+    suporteTecnico: typeof online.suporteTecnico === 'number' ? online.suporteTecnico : base.suporteTecnico,
+    resistenciaTecnica: typeof online.resistenciaTecnica === 'number' ? online.resistenciaTecnica : base.resistenciaTecnica,
+    atr14: typeof online.atr14 === 'number' ? online.atr14 : base.atr14,
+    tradeSignalRecomendacao: online.tradeSignalRecomendacao || base.tradeSignalRecomendacao,
+    tradeSignalSources: online.tradeSignalSources || base.tradeSignalSources,
+    tradeSignalUpdatedAt: online.tradeSignalUpdatedAt || base.tradeSignalUpdatedAt,
     onlineSources: online.onlineSources || base.onlineSources,
     onlineUpdatedAt: online.onlineUpdatedAt || new Date().toISOString(),
   };
@@ -218,5 +246,60 @@ export async function refreshStocksOnline<T extends StockData>(
     notFoundTickers,
     sourcesUsed: Array.from(sourcesSet),
     updatedAt: new Date().toISOString(),
+  };
+}
+
+export interface TradeSignalResult {
+  papel: string;
+  cotacao: number;
+  pontoEntrada: number;
+  stopLoss: number;
+  alvo1CurtoPrazo: number;
+  alvo2LongoPrazo: number;
+  riscoRetorno: string;
+  rsi14: number;
+  tendenciaTecnica: string;
+  padraoGrafico: string;
+  suporteTecnico: number;
+  resistenciaTecnica: number;
+  atr14: number;
+  tradeSignalRecomendacao: string;
+  tradeSignalSources: string[];
+  tradeSignalUpdatedAt: string;
+}
+
+export async function refreshTradeSignalsOnline(
+  tickers: string[],
+  quotes?: Record<string, number>
+): Promise<{
+  results: Record<string, TradeSignalResult>;
+  sourcesUsed: string[];
+  updatedAt: string;
+}> {
+  const uniqueTickers = Array.from(
+    new Set(tickers.map((t) => t.toUpperCase().trim().replace(/\.SA$/i, '')).filter((t) => t.length >= 4))
+  ).slice(0, 25);
+
+  const response = await fetch('/api/stocks/trade-signals', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tickers: uniqueTickers, quotes: quotes || {}, useInvestingSearch: true }),
+  });
+
+  if (!response.ok) {
+    const errBody = await response.json().catch(() => ({}));
+    throw new Error(errBody?.error || 'Falha ao consultar indicações técnicas online.');
+  }
+
+  const json = (await response.json()) as {
+    results?: Record<string, TradeSignalResult>;
+    sourcesUsed?: string[];
+    updatedAt?: string;
+  };
+
+  return {
+    results: json.results || {},
+    sourcesUsed: json.sourcesUsed || [],
+    updatedAt: json.updatedAt || new Date().toISOString(),
   };
 }

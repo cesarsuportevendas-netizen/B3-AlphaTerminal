@@ -41,10 +41,11 @@ import { AdminManager } from './components/AdminManager';
 import { GoogleDriveManager } from './components/GoogleDriveManager';
 import { GmailManager } from './components/GmailManager';
 import { AuthGate } from './components/AuthGate';
+import { CorrelationMatrix } from './components/CorrelationMatrix';
 import { useAuth } from './context/AuthContext';
 import { exportToExcel, exportToCSV } from './utils/excelParser';
 import { DEFAULT_B3_DATA } from './data/defaultB3Data';
-import { refreshStocksOnline } from './services/onlineStockUpdater';
+import { refreshStocksOnline, TradeSignalResult } from './services/onlineStockUpdater';
 
 const INITIAL_FILTERS: FilterState = {
   search: '',
@@ -95,6 +96,7 @@ export default function App() {
     ai_news: 'Radar IA & Fatos Relevantes',
     smartmoney: 'Tubarões & Fluxo',
     'ai-forecast': 'Previsões IA & Trades',
+    correlation: 'Matriz de Correlação',
     'custom-portfolio': 'Minha Carteira',
     portfolios: 'Carteiras IA & Renda',
     alerts: 'Alertas',
@@ -226,6 +228,60 @@ export default function App() {
     if (selectedStockForAI.id === unifiedUpdated.id) {
       setSelectedStockForAI(unifiedUpdated);
     }
+  };
+
+  const handleApplyTradeSignals = (
+    signalMap: Record<string, TradeSignalResult>,
+    sourcesUsed: string[] = []
+  ) => {
+    const entries = Object.keys(signalMap);
+    if (entries.length === 0) return;
+
+    const nextList = stocks.map((s) => {
+      const key = s.papel.toUpperCase().trim();
+      const sig = signalMap[key];
+      if (!sig) return s;
+      return unifyStock({
+        ...s,
+        cotacao: sig.cotacao > 0 ? sig.cotacao : s.cotacao,
+        pontoEntrada: sig.pontoEntrada,
+        stopLoss: sig.stopLoss,
+        alvo1CurtoPrazo: sig.alvo1CurtoPrazo,
+        alvo2LongoPrazo: sig.alvo2LongoPrazo,
+        riscoRetorno: sig.riscoRetorno,
+        rsi14: sig.rsi14,
+        tendenciaTecnica: sig.tendenciaTecnica,
+        padraoGrafico: sig.padraoGrafico,
+        suporteTecnico: sig.suporteTecnico,
+        resistenciaTecnica: sig.resistenciaTecnica,
+        atr14: sig.atr14,
+        tradeSignalRecomendacao: sig.tradeSignalRecomendacao,
+        tradeSignalSources: sig.tradeSignalSources,
+        tradeSignalUpdatedAt: sig.tradeSignalUpdatedAt,
+      });
+    });
+
+    const recalculated = calculateRankings(nextList, weights);
+    const unified = recalculated.map((s) => unifyStock(s));
+    setStocks(unified);
+    saveStocks(unified);
+
+    if (selectedStockForAI?.papel) {
+      const updatedSelected = unified.find(
+        (u) => u.papel.toUpperCase() === selectedStockForAI.papel.toUpperCase()
+      );
+      if (updatedSelected) setSelectedStockForAI(updatedSelected);
+    }
+
+    setActiveNotifications((prev) => [
+      {
+        id: 'notif_' + Date.now(),
+        title: 'Sinais Técnicos Atualizados',
+        body: `${entries.length} ativos sincronizados com indicações de trade (${sourcesUsed.join(', ') || 'br.investing.com / TradingView'}).`,
+        timestamp: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
+      },
+      ...prev.slice(0, 2),
+    ]);
   };
 
   const handleDeleteStock = (id: string) => {
@@ -579,6 +635,7 @@ export default function App() {
                   weights={weights}
                   onUpdateWeights={handleUpdateWeights}
                   onOpenCompanyModal={handleOpenCompanyModal}
+                  onApplyTradeSignals={handleApplyTradeSignals}
                 />
               )}
 
@@ -661,6 +718,15 @@ export default function App() {
               onSelectStock={(s) => setSelectedStockForAI(unifyStock(s))}
               onBack={handleBackFromAI}
               previousTabTitle={TAB_LABELS[previousTab] || 'Destaques Top 10'}
+              onApplyTradeSignals={handleApplyTradeSignals}
+            />
+          )}
+
+          {/* Matriz de Correlação D3 */}
+          {activeTab === 'correlation' && (
+            <CorrelationMatrix
+              stocks={stocks}
+              filteredStocks={filteredStocks}
             />
           )}
 

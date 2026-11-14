@@ -13,7 +13,10 @@ import {
   Award,
   TrendingUp,
   Info,
+  RefreshCw,
+  Globe,
 } from 'lucide-react';
+import { refreshTradeSignalsOnline, TradeSignalResult } from '../services/onlineStockUpdater';
 
 interface Top10ShowcaseProps {
   stocks: StockIndicator[];
@@ -21,6 +24,7 @@ interface Top10ShowcaseProps {
   weights: RankingWeights;
   onUpdateWeights: (newWeights: RankingWeights) => void;
   onOpenCompanyModal?: (stock: StockIndicator) => void;
+  onApplyTradeSignals?: (signalMap: Record<string, TradeSignalResult>, sourcesUsed?: string[]) => void;
 }
 
 export type StrategyKey = 'geral' | 'greenblatt' | 'bazin' | 'graham' | 'smartmoney';
@@ -83,9 +87,12 @@ export const Top10Showcase: React.FC<Top10ShowcaseProps> = ({
   weights,
   onUpdateWeights,
   onOpenCompanyModal,
+  onApplyTradeSignals,
 }) => {
   const [filterStrategy, setFilterStrategy] = useState<StrategyKey>('geral');
   const [showSliders, setShowSliders] = useState(false);
+  const [isSyncingSignals, setIsSyncingSignals] = useState(false);
+  const [signalSyncMsg, setSignalSyncMsg] = useState<string | null>(null);
 
   // Compute filtered top 10 based on selected strategy
   const top10 = useMemo(() => {
@@ -216,13 +223,69 @@ export const Top10Showcase: React.FC<Top10ShowcaseProps> = ({
 
           <button
             onClick={() => setShowSliders(!showSliders)}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium rounded-lg border border-slate-700 transition-colors"
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium rounded-lg border border-slate-700 transition-colors cursor-pointer"
           >
             <SlidersHorizontal className="w-3.5 h-3.5" />
             <span>Ponderar Indicadores</span>
           </button>
+
+          {onApplyTradeSignals && top10.length > 0 && (
+            <button
+              type="button"
+              disabled={isSyncingSignals}
+              onClick={async () => {
+                setIsSyncingSignals(true);
+                setSignalSyncMsg(null);
+                try {
+                  const quotes: Record<string, number> = {};
+                  top10.forEach((s) => {
+                    quotes[s.papel.toUpperCase().trim()] = s.cotacao;
+                  });
+                  const { results, sourcesUsed } = await refreshTradeSignalsOnline(
+                    top10.map((s) => s.papel),
+                    quotes
+                  );
+                  onApplyTradeSignals(results, sourcesUsed);
+                  const count = Object.keys(results).length;
+                  setSignalSyncMsg(
+                    count > 0
+                      ? `${count} ativos calibrados (${sourcesUsed.join(' · ') || 'br.investing.com · TradingView'})`
+                      : 'Nenhum sinal técnico retornado no momento.'
+                  );
+                } catch (err) {
+                  setSignalSyncMsg(
+                    err instanceof Error ? err.message : 'Falha ao consultar sinais técnicos online.'
+                  );
+                } finally {
+                  setIsSyncingSignals(false);
+                }
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-500/15 hover:bg-emerald-500/25 disabled:opacity-60 text-emerald-300 text-xs font-semibold rounded-lg border border-emerald-500/35 transition-colors cursor-pointer"
+              title="Buscar indicações técnicas em br.investing.com, TradingView e Yahoo Finance para aprimorar Entrada, Stop Loss, Alvo 1 e Risco/Retorno"
+            >
+              {isSyncingSignals ? (
+                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Globe className="w-3.5 h-3.5" />
+              )}
+              <span>{isSyncingSignals ? 'Sincronizando Sinais...' : 'Sinais Trade Online'}</span>
+            </button>
+          )}
         </div>
       </div>
+
+      {signalSyncMsg && (
+        <div className="text-xs font-mono text-emerald-300 bg-slate-900 border border-emerald-500/30 rounded-lg px-3.5 py-2 flex items-center justify-between gap-2">
+          <span>{signalSyncMsg}</span>
+          <button
+            type="button"
+            onClick={() => setSignalSyncMsg(null)}
+            className="text-slate-400 hover:text-white cursor-pointer"
+          >
+            ✕
+          </button>
+        </div>
+      )}
 
       {/* Active Strategy Explanatory Context Banner */}
       <div className="flex items-center gap-3 p-3 bg-slate-900/90 border border-slate-800 rounded-xl text-xs">
@@ -503,6 +566,22 @@ export const Top10Showcase: React.FC<Top10ShowcaseProps> = ({
                   <span className="text-slate-400">Risco / Retorno:</span>
                   <span className="text-slate-200 font-bold">{stock.riscoRetorno}</span>
                 </div>
+                {(stock.tradeSignalRecomendacao || (stock.tradeSignalSources && stock.tradeSignalSources.length > 0)) && (
+                  <div className="pt-1.5 mt-1 border-t border-slate-800/80 flex items-center justify-between gap-2 flex-wrap text-[11px] text-slate-400">
+                    <span>
+                      Sinal:{' '}
+                      <strong className={stock.tradeSignalRecomendacao?.includes('Compra') ? 'text-emerald-400' : stock.tradeSignalRecomendacao?.includes('Venda') ? 'text-rose-400' : 'text-amber-300'}>
+                        {stock.tradeSignalRecomendacao || stock.tendenciaTecnica}
+                      </strong>
+                      {' · '}RSI(14): {stock.rsi14}
+                    </span>
+                    {stock.tradeSignalSources && stock.tradeSignalSources.length > 0 && (
+                      <span className="text-slate-500 truncate">
+                        {stock.tradeSignalSources.join(' · ')}
+                      </span>
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* Smart Money Footprint Line */}

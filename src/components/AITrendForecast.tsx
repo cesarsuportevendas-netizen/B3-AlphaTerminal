@@ -14,7 +14,9 @@ import {
   ArrowLeft,
   Clock,
   Calendar,
+  Globe,
 } from 'lucide-react';
+import { refreshTradeSignalsOnline, TradeSignalResult } from '../services/onlineStockUpdater';
 
 export type TimeCategory = 'minutos' | 'horas' | 'dias' | 'anos';
 export type TimeInterval = '15m' | '30m' | '1h' | '4h' | '1D' | '1S' | '1A' | '5A';
@@ -36,6 +38,7 @@ interface AITrendForecastProps {
   onSelectStock: (stock: StockIndicator) => void;
   onBack?: () => void;
   previousTabTitle?: string;
+  onApplyTradeSignals?: (signalMap: Record<string, TradeSignalResult>, sourcesUsed?: string[]) => void;
 }
 
 const TIMEFRAME_CONFIG: {
@@ -360,10 +363,12 @@ export const AITrendForecast: React.FC<AITrendForecastProps> = ({
   onSelectStock,
   onBack,
   previousTabTitle,
+  onApplyTradeSignals,
 }) => {
   const [horizon, setHorizon] = useState<'Curto e Longo Prazo' | 'Curto Prazo (Swing Trade)' | 'Longo Prazo (Buy & Hold)'>('Curto e Longo Prazo');
   const [customFocus, setCustomFocus] = useState<string>('');
   const [isLoading, setIsLoading] = useState(false);
+  const [isSyncingOnlineSignal, setIsSyncingOnlineSignal] = useState(false);
   const [prediction, setPrediction] = useState<AIPrediction | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
@@ -498,8 +503,8 @@ export const AITrendForecast: React.FC<AITrendForecastProps> = ({
           </p>
         </div>
 
-        {/* Stock Selector Dropdown */}
-        <div className="flex items-center gap-2 shrink-0">
+        {/* Stock Selector Dropdown & Investing.com Trade Signals Sync */}
+        <div className="flex items-center flex-wrap gap-2 shrink-0">
           <label className="text-xs text-slate-400 whitespace-nowrap">Ativo em Análise:</label>
           <select
             value={selectedStock.id}
@@ -515,6 +520,39 @@ export const AITrendForecast: React.FC<AITrendForecastProps> = ({
               </option>
             ))}
           </select>
+
+          {onApplyTradeSignals && selectedStock?.papel && (
+            <button
+              type="button"
+              disabled={isSyncingOnlineSignal}
+              onClick={async () => {
+                setIsSyncingOnlineSignal(true);
+                try {
+                  const key = selectedStock.papel.toUpperCase().trim();
+                  const { results, sourcesUsed } = await refreshTradeSignalsOnline(
+                    [key],
+                    { [key]: selectedStock.cotacao }
+                  );
+                  onApplyTradeSignals(results, sourcesUsed);
+                } catch (err) {
+                  setErrorMsg(
+                    err instanceof Error ? err.message : 'Falha ao sincronizar sinais de trade.'
+                  );
+                } finally {
+                  setIsSyncingOnlineSignal(false);
+                }
+              }}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-500/15 hover:bg-emerald-500/25 disabled:opacity-60 text-emerald-300 border border-emerald-500/35 rounded-lg text-xs font-semibold transition-colors cursor-pointer"
+              title="Buscar níveis técnicos atualizados em br.investing.com, TradingView e Yahoo Finance"
+            >
+              {isSyncingOnlineSignal ? (
+                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Globe className="w-3.5 h-3.5" />
+              )}
+              <span>{isSyncingOnlineSignal ? 'Buscando Sinais...' : 'Calibrar Sinais Online'}</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -898,9 +936,28 @@ export const AITrendForecast: React.FC<AITrendForecastProps> = ({
               </div>
             </div>
 
-            <div className="text-xs text-slate-400 p-3 rounded-lg bg-slate-950/60 border border-slate-800/80">
-              <span className="text-slate-300 font-semibold">Padrão Gráfico Detectado: </span>
-              {selectedStock.padraoGrafico}
+            <div className="text-xs text-slate-400 p-3 rounded-lg bg-slate-950/60 border border-slate-800/80 space-y-1">
+              <div>
+                <span className="text-slate-300 font-semibold">Padrão Gráfico Detectado: </span>
+                {selectedStock.padraoGrafico}
+              </div>
+              {(selectedStock.tradeSignalRecomendacao || (selectedStock.tradeSignalSources && selectedStock.tradeSignalSources.length > 0)) && (
+                <div className="text-[11px] font-mono text-slate-400 flex items-center justify-between gap-2 flex-wrap">
+                  <span>
+                    Indicação Técnica:{' '}
+                    <strong className={selectedStock.tradeSignalRecomendacao?.includes('Compra') ? 'text-emerald-400' : selectedStock.tradeSignalRecomendacao?.includes('Venda') ? 'text-rose-400' : 'text-amber-300'}>
+                      {selectedStock.tradeSignalRecomendacao || selectedStock.tendenciaTecnica}
+                    </strong>
+                    {selectedStock.suporteTecnico ? ` · Suporte: ${formatCurrency(selectedStock.suporteTecnico)}` : ''}
+                    {selectedStock.resistenciaTecnica ? ` · Resistência: ${formatCurrency(selectedStock.resistenciaTecnica)}` : ''}
+                  </span>
+                  {selectedStock.tradeSignalSources && selectedStock.tradeSignalSources.length > 0 && (
+                    <span className="text-slate-500">
+                      Fontes: {selectedStock.tradeSignalSources.join(' · ')}
+                    </span>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         </div>

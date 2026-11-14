@@ -138,6 +138,12 @@ export function unifyStock(raw: any): UnifiedStock {
     observacoes: raw.observacoes,
     onlineSources: raw.onlineSources,
     onlineUpdatedAt: raw.onlineUpdatedAt,
+    tradeSignalSources: raw.tradeSignalSources,
+    tradeSignalRecomendacao: raw.tradeSignalRecomendacao,
+    tradeSignalUpdatedAt: raw.tradeSignalUpdatedAt,
+    suporteTecnico: raw.suporteTecnico,
+    resistenciaTecnica: raw.resistenciaTecnica,
+    atr14: raw.atr14,
   };
 
   return unified;

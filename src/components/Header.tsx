@@ -20,6 +20,7 @@ import {
   KeyRound,
   HardDrive,
   Mail,
+  GitCompareArrows,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
@@ -93,6 +94,7 @@ export const Header: React.FC<HeaderProps> = ({
         { id: 'ai_news', label: 'Radar IA & Fatos Relevantes', icon: Globe, badge: 'Google Search' },
         { id: 'smartmoney', label: 'Tubarões & Fluxo', icon: Activity },
         { id: 'ai-forecast', label: 'Previsões IA & Trades', icon: Sparkles },
+        { id: 'correlation', label: 'Matriz de Correlação', icon: GitCompareArrows, badge: 'D3' },
       ],
     },
     {
