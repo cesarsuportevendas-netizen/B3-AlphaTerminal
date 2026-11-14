@@ -19,6 +19,7 @@ import {
   User,
   KeyRound,
   HardDrive,
+  Mail,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
@@ -65,7 +66,7 @@ export const Header: React.FC<HeaderProps> = ({
   onToggleSidebar,
   isSidebarOpen,
 }) => {
-  const { user, userProfile, isAdmin, driveAccessToken } = useAuth();
+  const { user, userProfile, isAdmin, driveAccessToken, gmailAccessToken } = useAuth();
   const [isExportMenuOpen, setIsExportMenuOpen] = useState(false);
 
   const mainCategories: { group: string; items: NavItem[] }[] = [
@@ -106,6 +107,12 @@ export const Header: React.FC<HeaderProps> = ({
           label: 'Google Drive',
           icon: HardDrive,
           badge: driveAccessToken ? 'Ativo' : undefined,
+        },
+        {
+          id: 'gmail',
+          label: 'Gmail',
+          icon: Mail,
+          badge: gmailAccessToken ? 'Ativo' : undefined,
         },
         ...(isAdmin
           ? [{ id: 'admin', label: 'Painel Admin', icon: KeyRound, badge: 'Logins' }]
@@ -220,6 +227,13 @@ export const Header: React.FC<HeaderProps> = ({
                 >
                   <HardDrive className="w-3.5 h-3.5 text-cyan-400" />
                   <span>Google Drive</span>
+                </button>
+                <button
+                  onClick={() => setActiveTab('gmail')}
+                  className="w-full text-left px-3 py-2 text-xs text-slate-200 hover:bg-slate-800 hover:text-rose-400 flex items-center gap-2"
+                >
+                  <Mail className="w-3.5 h-3.5 text-rose-400" />
+                  <span>Gmail</span>
                 </button>
               </div>
             )}

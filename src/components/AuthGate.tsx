@@ -22,6 +22,7 @@ import {
   ArrowRight,
 } from 'lucide-react';
 import { useAuth, BOOTSTRAP_ADMIN_EMAIL } from '../context/AuthContext';
+import { UnauthorizedDomainHelp } from './UnauthorizedDomainHelp';
 
 interface AuthGateProps {
   children: React.ReactNode;
@@ -37,6 +38,7 @@ export const AuthGate: React.FC<AuthGateProps> = ({ children, onOpenLoginModal }
     loading,
     error: authError,
     loginWithGoogle,
+    loginWithBasicGoogle,
     loginWithEmailStart,
     loginWithEmailPassword,
     loginWithAdminCredentials,
@@ -91,11 +93,25 @@ export const AuthGate: React.FC<AuthGateProps> = ({ children, onOpenLoginModal }
     try {
       const prof = await loginWithGoogle();
       if (!prof) {
-        // Error state is populated on AuthContext; fallback notice if none
         setGoogleError(null);
       }
     } catch (e) {
       setGoogleError(e instanceof Error ? e.message : 'Falha na autenticação com Google.');
+    } finally {
+      setIsLoggingIn(false);
+    }
+  };
+
+  const handleBasicGoogleLoginClick = async () => {
+    setIsLoggingIn(true);
+    setAdminError(null);
+    setEmailError(null);
+    setEmailNotice(null);
+    setGoogleError(null);
+    try {
+      await loginWithBasicGoogle();
+    } catch (e) {
+      setGoogleError(e instanceof Error ? e.message : 'Falha na autenticação básica com Google.');
     } finally {
       setIsLoggingIn(false);
     }
@@ -272,7 +288,7 @@ export const AuthGate: React.FC<AuthGateProps> = ({ children, onOpenLoginModal }
               </span>
             </h1>
             <p className="text-sm sm:text-base text-slate-300 leading-relaxed max-w-xl mx-auto">
-              Para acessar o terminal quantitativo, valuations de Graham e Bazin, rastreador de fluxo dos tubarões e integração com Google Drive, entre com seu e-mail e senha cadastrada ou conta Google.
+              Para acessar o terminal quantitativo, valuations de Graham e Bazin, rastreador de fluxo dos tubarões e integração com Google Drive e Gmail, entre com seu e-mail e senha cadastrada ou conta Google.
             </p>
           </div>
 
@@ -465,9 +481,22 @@ export const AuthGate: React.FC<AuthGateProps> = ({ children, onOpenLoginModal }
                 </button>
 
                 {(googleError || authError) && (
-                  <div className="p-3 rounded-lg bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs flex items-start gap-2">
-                    <AlertCircle className="w-4 h-4 shrink-0 text-rose-400 mt-0.5" />
-                    <span>{googleError || authError}</span>
+                  <div className="space-y-2">
+                    <div className="p-3 rounded-lg bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs flex items-start gap-2">
+                      <AlertCircle className="w-4 h-4 shrink-0 text-rose-400 mt-0.5" />
+                      <span className="break-words min-w-0">{googleError || authError}</span>
+                    </div>
+                    <UnauthorizedDomainHelp errorMessage={googleError || authError} />
+                    {(googleError || authError || '').includes('Workspace') && (
+                      <button
+                        type="button"
+                        onClick={handleBasicGoogleLoginClick}
+                        disabled={isLoggingIn}
+                        className="w-full py-2 px-3 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-[11px] font-semibold rounded-lg transition-colors cursor-pointer disabled:opacity-60"
+                      >
+                        Entrar apenas com Conta Google básica (sem Drive/Gmail)
+                      </button>
+                    )}
                   </div>
                 )}
               </div>
@@ -580,9 +609,22 @@ export const AuthGate: React.FC<AuthGateProps> = ({ children, onOpenLoginModal }
                 </button>
 
                 {(googleError || authError) && (
-                  <div className="p-3 rounded-lg bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs flex items-start gap-2">
-                    <AlertCircle className="w-4 h-4 shrink-0 text-rose-400 mt-0.5" />
-                    <span>{googleError || authError}</span>
+                  <div className="space-y-2">
+                    <div className="p-3 rounded-lg bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs flex items-start gap-2">
+                      <AlertCircle className="w-4 h-4 shrink-0 text-rose-400 mt-0.5" />
+                      <span className="break-words min-w-0">{googleError || authError}</span>
+                    </div>
+                    <UnauthorizedDomainHelp errorMessage={googleError || authError} />
+                    {(googleError || authError || '').includes('Workspace') && (
+                      <button
+                        type="button"
+                        onClick={handleBasicGoogleLoginClick}
+                        disabled={isLoggingIn}
+                        className="w-full py-2 px-3 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-[11px] font-semibold rounded-lg transition-colors cursor-pointer disabled:opacity-60"
+                      >
+                        Cadastrar apenas com Conta Google básica (sem Drive/Gmail)
+                      </button>
+                    )}
                   </div>
                 )}
               </div>

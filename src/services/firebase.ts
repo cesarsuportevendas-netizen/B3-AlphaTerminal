@@ -18,9 +18,24 @@ import firebaseConfig from '../../firebase-applet-config.json';
 export const app = initializeApp(firebaseConfig);
 
 // CRITICAL: Must specify firestoreDatabaseId for enterprise database provisioning
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+const configuredDatabaseId =
+  (firebaseConfig as { firestoreDatabaseId?: string }).firestoreDatabaseId ||
+  'ai-studio-b3alphaterminal-855a5739-a724-4a3c-b6f0-36a0303aaf8c';
+export const db = getFirestore(app, configuredDatabaseId);
 export const auth = getAuth(app);
-export const SCOPES = [
+
+export const FIREBASE_PROJECT_ID = firebaseConfig.projectId || 'shining-smoke-356101';
+export const FIREBASE_AUTH_DOMAIN =
+  firebaseConfig.authDomain || `${FIREBASE_PROJECT_ID}.firebaseapp.com`;
+export const FIREBASE_OAUTH_CLIENT_ID =
+  (firebaseConfig as { oAuthClientId?: string }).oAuthClientId || '';
+export const IS_OAUTH_CLIENT_LINKED = Boolean(
+  FIREBASE_OAUTH_CLIENT_ID &&
+    firebaseConfig.messagingSenderId &&
+    FIREBASE_OAUTH_CLIENT_ID.startsWith(`${firebaseConfig.messagingSenderId}-`)
+);
+
+export const DRIVE_SCOPES = [
   'https://www.googleapis.com/auth/drive',
   'https://www.googleapis.com/auth/drive.activity',
   'https://www.googleapis.com/auth/drive.activity.readonly',
@@ -36,26 +51,67 @@ export const SCOPES = [
   'https://www.googleapis.com/auth/drive.scripts',
 ] as const;
 
+export const GMAIL_SCOPES = [
+  'https://mail.google.com/',
+  'https://www.googleapis.com/auth/gmail.addons.current.action.compose',
+  'https://www.googleapis.com/auth/gmail.addons.current.message.action',
+  'https://www.googleapis.com/auth/gmail.addons.current.message.metadata',
+  'https://www.googleapis.com/auth/gmail.addons.current.message.readonly',
+  'https://www.googleapis.com/auth/gmail.compose',
+  'https://www.googleapis.com/auth/gmail.insert',
+  'https://www.googleapis.com/auth/gmail.labels',
+  'https://www.googleapis.com/auth/gmail.metadata',
+  'https://www.googleapis.com/auth/gmail.modify',
+  'https://www.googleapis.com/auth/gmail.readonly',
+  'https://www.googleapis.com/auth/gmail.send',
+  'https://www.googleapis.com/auth/gmail.settings.basic',
+  'https://www.googleapis.com/auth/gmail.settings.sharing',
+] as const;
+
+export const SCOPES = [...DRIVE_SCOPES, ...GMAIL_SCOPES] as const;
+
 export const googleProvider = new GoogleAuthProvider();
 SCOPES.forEach((scope) => {
   googleProvider.addScope(scope);
 });
-
-// Standard prompt for Google login
 googleProvider.setCustomParameters({
   prompt: 'select_account',
+  include_granted_scopes: 'true',
 });
 
-export function createDriveConsentProvider(): GoogleAuthProvider {
+export function createWorkspaceSignInProvider(): GoogleAuthProvider {
+  const provider = new GoogleAuthProvider();
+  SCOPES.forEach((scope) => {
+    provider.addScope(scope);
+  });
+  provider.setCustomParameters({
+    prompt: 'select_account',
+    include_granted_scopes: 'true',
+  });
+  return provider;
+}
+
+export function createWorkspaceConsentProvider(): GoogleAuthProvider {
   const provider = new GoogleAuthProvider();
   SCOPES.forEach((scope) => {
     provider.addScope(scope);
   });
   provider.setCustomParameters({
     prompt: 'consent select_account',
+    include_granted_scopes: 'true',
   });
   return provider;
 }
+
+export function createBasicGoogleProvider(): GoogleAuthProvider {
+  const provider = new GoogleAuthProvider();
+  provider.setCustomParameters({
+    prompt: 'select_account',
+  });
+  return provider;
+}
+
+export const createDriveConsentProvider = createWorkspaceConsentProvider;
 
 export enum OperationType {
   CREATE = 'create',

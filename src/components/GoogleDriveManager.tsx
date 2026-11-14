@@ -24,6 +24,7 @@ import {
   Globe,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { UnauthorizedDomainHelp } from './UnauthorizedDomainHelp';
 import { StockData } from '../types/stock';
 import {
   DriveFileItem,
@@ -470,9 +471,12 @@ export const GoogleDriveManager: React.FC<GoogleDriveManagerProps> = ({
           </div>
 
           {errorMsg && (
-            <div className="max-w-md mx-auto p-3 rounded-lg bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs flex items-center gap-2 text-left">
-              <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
-              <span>{errorMsg}</span>
+            <div className="max-w-md mx-auto space-y-2 text-left">
+              <div className="p-3 rounded-lg bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0 text-rose-400 mt-0.5" />
+                <span className="break-words min-w-0">{errorMsg}</span>
+              </div>
+              <UnauthorizedDomainHelp errorMessage={errorMsg} />
             </div>
           )}
 

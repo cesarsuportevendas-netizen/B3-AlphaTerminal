@@ -18,6 +18,7 @@ import {
   Mail,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { UnauthorizedDomainHelp } from './UnauthorizedDomainHelp';
 
 interface LoginModalProps {
   isOpen: boolean;
@@ -36,12 +37,17 @@ export const LoginModal: React.FC<LoginModalProps> = ({
     emailToken,
     driveAccessToken,
     driveAccountEmail,
+    gmailAccessToken,
+    gmailAccountEmail,
     isAdmin,
     loading,
     error,
     loginWithGoogle,
+    loginWithBasicGoogle,
     connectGoogleDrive,
     disconnectGoogleDrive,
+    connectGmail,
+    disconnectGmail,
     loginWithEmailStart,
     loginWithEmailPassword,
     loginWithAdminCredentials,
@@ -54,19 +60,23 @@ export const LoginModal: React.FC<LoginModalProps> = ({
   const [showPassword, setShowPassword] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
 
-  // Email login state
+  // Email & Google login state
   const [emailInput, setEmailInput] = useState('');
   const [emailPasswordInput, setEmailPasswordInput] = useState('');
   const [showEmailPass, setShowEmailPass] = useState(false);
   const [isEmailBusy, setIsEmailBusy] = useState(false);
+  const [isConnectingGoogle, setIsConnectingGoogle] = useState(false);
   const [isConnectingDrive, setIsConnectingDrive] = useState(false);
+  const [isConnectingGmail, setIsConnectingGmail] = useState(false);
+  const [isAdminBusy, setIsAdminBusy] = useState(false);
 
   if (!isOpen) return null;
 
-  const handleGoogleLogin = async () => {
+  const handleGoogleLogin = async (basicOnly = false) => {
     setAuthError(null);
+    setIsConnectingGoogle(true);
     try {
-      const profile = await loginWithGoogle();
+      const profile = basicOnly ? await loginWithBasicGoogle() : await loginWithGoogle();
       if (profile) {
         if (profile.status === 'suspended') {
           setAuthError('Sua conta de membro está suspensa pelo administrador.');
@@ -76,6 +86,8 @@ export const LoginModal: React.FC<LoginModalProps> = ({
       }
     } catch (err: unknown) {
       setAuthError(err instanceof Error ? err.message : 'Falha ao autenticar.');
+    } finally {
+      setIsConnectingGoogle(false);
     }
   };
 
@@ -88,6 +100,18 @@ export const LoginModal: React.FC<LoginModalProps> = ({
       setAuthError(err instanceof Error ? err.message : 'Falha ao conectar Google Drive.');
     } finally {
       setIsConnectingDrive(false);
+    }
+  };
+
+  const handleConnectGmail = async () => {
+    setAuthError(null);
+    setIsConnectingGmail(true);
+    try {
+      await connectGmail();
+    } catch (err: unknown) {
+      setAuthError(err instanceof Error ? err.message : 'Falha ao conectar Gmail.');
+    } finally {
+      setIsConnectingGmail(false);
     }
   };
 
@@ -142,6 +166,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
   const handleAdminLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setAuthError(null);
+    setIsAdminBusy(true);
     try {
       const res = await loginWithAdminCredentials(adminName, adminPassword);
       if (!res.success) {
@@ -154,6 +179,8 @@ export const LoginModal: React.FC<LoginModalProps> = ({
       }
     } catch {
       setAuthError('Erro ao realizar login administrativo.');
+    } finally {
+      setIsAdminBusy(false);
     }
   };
 
@@ -305,6 +332,57 @@ export const LoginModal: React.FC<LoginModalProps> = ({
                 )}
               </div>
 
+              {/* Gmail status / quick connect */}
+              <div className="p-3.5 rounded-xl bg-slate-950/70 border border-slate-800 flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-xs font-semibold text-white flex items-center gap-1.5">
+                    <span>Gmail</span>
+                    <span
+                      className={`text-[10px] px-1.5 py-0.2 rounded font-mono ${
+                        gmailAccessToken
+                          ? 'bg-emerald-500/20 text-emerald-300'
+                          : 'bg-slate-800 text-slate-400'
+                      }`}
+                    >
+                      {gmailAccessToken ? 'Conectado' : 'Não conectado'}
+                    </span>
+                  </div>
+                  <div className="text-[11px] text-slate-400 truncate mt-0.5">
+                    {gmailAccessToken
+                      ? gmailAccountEmail || user?.email || 'Token de sessão ativo'
+                      : 'Conecte para ler e enviar relatórios B3 pelo Gmail'}
+                  </div>
+                </div>
+                {gmailAccessToken ? (
+                  <button
+                    type="button"
+                    onClick={disconnectGmail}
+                    className="px-2.5 py-1.5 text-[11px] font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg border border-slate-700 cursor-pointer shrink-0"
+                  >
+                    Desconectar
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={handleConnectGmail}
+                    disabled={isConnectingGmail}
+                    className="px-3 py-1.5 text-[11px] font-bold bg-white hover:bg-slate-100 text-slate-900 rounded-lg cursor-pointer shrink-0 disabled:opacity-60"
+                  >
+                    {isConnectingGmail ? 'Conectando...' : 'Conectar Gmail'}
+                  </button>
+                )}
+              </div>
+
+              {(authError || error) && (
+                <div className="space-y-2">
+                  <div className="p-3 rounded-lg bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs flex items-start gap-2">
+                    <AlertCircle className="w-4 h-4 shrink-0 text-rose-400 mt-0.5" />
+                    <span className="break-words min-w-0">{authError || error}</span>
+                  </div>
+                  <UnauthorizedDomainHelp errorMessage={authError || error} />
+                </div>
+              )}
+
               {/* Quick Admin Shortcut if admin */}
               {isAdmin && onOpenAdmin && (
                 <button
@@ -443,8 +521,8 @@ export const LoginModal: React.FC<LoginModalProps> = ({
 
                   <button
                     type="button"
-                    onClick={handleGoogleLogin}
-                    disabled={loading}
+                    onClick={() => handleGoogleLogin(false)}
+                    disabled={isConnectingGoogle || loading}
                     className="w-full py-2.5 px-4 bg-white hover:bg-slate-100 text-slate-900 font-bold text-xs rounded-xl transition-all shadow-md flex items-center justify-center gap-2.5 cursor-pointer disabled:opacity-50"
                   >
                     <svg className="w-4 h-4 shrink-0" viewBox="0 0 48 48">
@@ -465,7 +543,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
                         d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"
                       />
                     </svg>
-                    <span>{loading ? 'Conectando...' : 'Sign in with Google'}</span>
+                    <span>{isConnectingGoogle ? 'Conectando...' : 'Sign in with Google'}</span>
                   </button>
                 </div>
               ) : authTab === 'register' ? (
@@ -536,19 +614,32 @@ export const LoginModal: React.FC<LoginModalProps> = ({
 
                   <button
                     type="submit"
-                    disabled={loading}
+                    disabled={isAdminBusy || loading}
                     className="w-full py-2.5 px-4 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-bold rounded-xl transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
                   >
                     <KeyRound className="w-3.5 h-3.5" />
-                    <span>{loading ? 'Autenticando...' : 'Entrar como Administrador'}</span>
+                    <span>{isAdminBusy ? 'Autenticando...' : 'Entrar como Administrador'}</span>
                   </button>
                 </form>
               )}
 
               {(authError || error) && (
-                <div className="p-3 rounded-lg bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs flex items-center gap-2">
-                  <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
-                  <span>{authError || error}</span>
+                <div className="space-y-2">
+                  <div className="p-3 rounded-lg bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs flex items-start gap-2">
+                    <AlertCircle className="w-4 h-4 shrink-0 text-rose-400 mt-0.5" />
+                    <span className="break-words min-w-0">{authError || error}</span>
+                  </div>
+                  <UnauthorizedDomainHelp errorMessage={authError || error} />
+                  {(authError || error || '').includes('Workspace') && (
+                    <button
+                      type="button"
+                      onClick={() => handleGoogleLogin(true)}
+                      disabled={isConnectingGoogle}
+                      className="w-full py-2 px-3 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-[11px] font-semibold rounded-lg transition-colors cursor-pointer disabled:opacity-60"
+                    >
+                      Entrar apenas com Conta Google básica (sem Drive/Gmail)
+                    </button>
+                  )}
                 </div>
               )}
             </div>

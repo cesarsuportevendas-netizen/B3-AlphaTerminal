@@ -1,16 +1,18 @@
 import React, { useState } from 'react';
 import { StockIndicator } from '../types/stock';
 import { formatCurrency, formatPercent } from '../utils/financialCalculations';
-import { Printer, Download, Sparkles, FileText, CheckCircle2, TrendingUp, ShieldCheck } from 'lucide-react';
+import { Printer, Download, Sparkles, FileText, CheckCircle2, TrendingUp, ShieldCheck, Mail } from 'lucide-react';
 
 interface ExecutiveReportViewProps {
   stocks: StockIndicator[];
   onExportCSV: () => void;
+  onSendByGmail?: () => void;
 }
 
 export const ExecutiveReportView: React.FC<ExecutiveReportViewProps> = ({
   stocks,
   onExportCSV,
+  onSendByGmail,
 }) => {
   const top10 = stocks.slice(0, 10);
   const [macroOutlook, setMacroOutlook] = useState<any>(null);
@@ -87,6 +89,16 @@ export const ExecutiveReportView: React.FC<ExecutiveReportViewProps> = ({
             <Download className="w-3.5 h-3.5" />
             <span>Exportar CSV</span>
           </button>
+
+          {onSendByGmail && (
+            <button
+              onClick={onSendByGmail}
+              className="flex items-center gap-1.5 px-3 py-2 bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 font-semibold text-xs rounded-lg border border-rose-500/30 transition-colors cursor-pointer"
+            >
+              <Mail className="w-3.5 h-3.5" />
+              <span>Enviar por Gmail</span>
+            </button>
+          )}
         </div>
       </div>
 

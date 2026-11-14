@@ -16,8 +16,13 @@ import {
 import {
   auth,
   db,
-  googleProvider,
-  createDriveConsentProvider,
+  GMAIL_SCOPES,
+  DRIVE_SCOPES,
+  createWorkspaceSignInProvider,
+  createWorkspaceConsentProvider,
+  createBasicGoogleProvider,
+  FIREBASE_OAUTH_CLIENT_ID,
+  FIREBASE_AUTH_DOMAIN,
   handleFirestoreError,
   OperationType,
 } from '../services/firebase';
@@ -25,10 +30,53 @@ import {
   setDriveAccessToken,
   clearDriveAccessToken,
 } from '../services/googleDriveService';
+import {
+  setGmailAccessToken,
+  clearGmailAccessToken,
+} from '../services/gmailService';
 import { UserProfile, UserRole, UserStatus } from '../types/auth';
 
 // Bootstrapped administrator email
 export const BOOTSTRAP_ADMIN_EMAIL = 'cesar.suporte.vendas@gmail.com';
+
+// Explicit Gmail OAuth2 scopes requested during Google sign-in and Gmail connection
+export const GMAIL_OAUTH_SCOPES = [
+  'https://www.googleapis.com/auth/gmail.compose',
+  'https://www.googleapis.com/auth/gmail.send',
+  'https://www.googleapis.com/auth/gmail.readonly',
+  'https://www.googleapis.com/auth/gmail.modify',
+  ...GMAIL_SCOPES.filter(
+    (scope) =>
+      scope !== 'https://www.googleapis.com/auth/gmail.compose' &&
+      scope !== 'https://www.googleapis.com/auth/gmail.send' &&
+      scope !== 'https://www.googleapis.com/auth/gmail.readonly' &&
+      scope !== 'https://www.googleapis.com/auth/gmail.modify'
+  ),
+] as const;
+
+function buildGoogleOAuthProvider(options: {
+  basicOnly?: boolean;
+  forceConsent?: boolean;
+}): GoogleAuthProvider {
+  if (options.basicOnly) {
+    return createBasicGoogleProvider();
+  }
+  const provider = options.forceConsent
+    ? createWorkspaceConsentProvider()
+    : createWorkspaceSignInProvider();
+
+  // Explicitly ensure Gmail & Drive OAuth2 scopes (including gmail.compose & gmail.send) are attached
+  const allRequiredScopes = Array.from(new Set([...GMAIL_OAUTH_SCOPES, ...DRIVE_SCOPES]));
+  allRequiredScopes.forEach((scope) => {
+    provider.addScope(scope);
+  });
+
+  provider.setCustomParameters({
+    prompt: options.forceConsent ? 'consent select_account' : 'select_account',
+    include_granted_scopes: 'true',
+  });
+  return provider;
+}
 
 // Administrative credentials identifier
 export const ADMIN_CREDENTIALS = {
@@ -54,13 +102,18 @@ interface AuthContextType {
   emailToken: string | null;
   driveAccessToken: string | null;
   driveAccountEmail: string | null;
+  gmailAccessToken: string | null;
+  gmailAccountEmail: string | null;
   isAdmin: boolean;
   isMember: boolean;
   loading: boolean;
   error: string | null;
   loginWithGoogle: () => Promise<UserProfile | null>;
+  loginWithBasicGoogle: () => Promise<UserProfile | null>;
   connectGoogleDrive: () => Promise<string | null>;
   disconnectGoogleDrive: () => void;
+  connectGmail: () => Promise<string | null>;
+  disconnectGmail: () => void;
   loginWithEmailStart: (email: string, displayName?: string) => Promise<EmailInitResult>;
   loginWithEmailPassword: (
     email: string,
@@ -126,16 +179,75 @@ function formatFirebaseAuthError(err: unknown): string {
   if (code === 'auth/popup-blocked' || message.includes('auth/popup-blocked')) {
     return 'Pop-up de login bloqueado pelo navegador. Libere pop-ups para este site e tente novamente.';
   }
-  if (code === 'auth/popup-closed-by-user' || message.includes('auth/popup-closed-by-user')) {
+  if (
+    code === 'auth/popup-closed-by-user' ||
+    code === 'auth/cancelled-popup-request' ||
+    message.includes('auth/popup-closed-by-user')
+  ) {
     return 'Janela de login Google fechada antes da conclusão.';
   }
   if (code === 'auth/operation-not-allowed' || message.includes('auth/operation-not-allowed')) {
-    return 'Login Google não está habilitado nas configurações do Firebase Authentication.';
+    return 'Provedor Google não está habilitado em Firebase Console → Authentication → Sign-in method (ou o OAuth Client ID não está vinculado).';
+  }
+  if (
+    message.toLowerCase().includes('redirect_uri_mismatch') ||
+    message.toLowerCase().includes('invalid_client') ||
+    message.toLowerCase().includes('unauthorized_client') ||
+    code === 'auth/invalid-credential'
+  ) {
+    return `Erro de vínculo OAuth2 (${FIREBASE_OAUTH_CLIENT_ID || 'Client ID'}). Verifique no Google Cloud Console se a URI "https://${FIREBASE_AUTH_DOMAIN}/__/auth/handler" e a origem atual estão autorizadas e vinculadas no Firebase.`;
+  }
+  if (message.toLowerCase().includes('invalid_scope')) {
+    return 'Um ou mais escopos OAuth2 (Gmail/Drive) não estão habilitados na Tela de Consentimento OAuth do Google Cloud Console.';
+  }
+  if (
+    message.toLowerCase().includes('access_denied') ||
+    message.toLowerCase().includes('access blocked') ||
+    message.toLowerCase().includes('verification')
+  ) {
+    return 'Acesso às permissões Workspace (Gmail/Drive) recusado ou restrito a contas de teste. Tente entrar apenas com a Conta Google básica.';
   }
   if (code === 'auth/network-request-failed' || message.includes('auth/network-request-failed')) {
     return 'Falha de rede ao conectar com o serviço de autenticação Google/Firebase.';
   }
   return message || 'Falha na autenticação com Google.';
+}
+
+interface TokenScopeCheckResult {
+  verified: boolean;
+  hasDriveScope: boolean;
+  hasGmailScope: boolean;
+}
+
+async function inspectGrantedOAuthScopes(accessToken: string): Promise<TokenScopeCheckResult> {
+  try {
+    const resp = await fetch(
+      `https://www.googleapis.com/oauth2/v3/tokeninfo?access_token=${encodeURIComponent(accessToken)}`
+    );
+    if (!resp.ok) {
+      return { verified: false, hasDriveScope: true, hasGmailScope: true };
+    }
+    const data = (await resp.json()) as { scope?: string };
+    const scopes = String(data?.scope || '')
+      .split(/\s+/)
+      .filter(Boolean);
+    if (scopes.length === 0) {
+      return { verified: false, hasDriveScope: true, hasGmailScope: true };
+    }
+    const hasDriveScope = scopes.some((s) => s.includes('/auth/drive'));
+    const hasGmailScope = scopes.some(
+      (s) =>
+        s === 'https://www.googleapis.com/auth/gmail.compose' ||
+        s === 'https://www.googleapis.com/auth/gmail.send' ||
+        s === 'https://www.googleapis.com/auth/gmail.readonly' ||
+        s === 'https://www.googleapis.com/auth/gmail.modify' ||
+        s.includes('mail.google.com') ||
+        s.includes('/auth/gmail')
+    );
+    return { verified: true, hasDriveScope, hasGmailScope };
+  } catch {
+    return { verified: false, hasDriveScope: true, hasGmailScope: true };
+  }
 }
 
 function readStoredAdminSession(): { active: boolean; token: string | null } {
@@ -200,6 +312,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const [emailToken, setEmailToken] = useState<string | null>(initialEmailToken);
   const [driveAccessToken, setDriveAccessTokenState] = useState<string | null>(null);
   const [driveAccountEmail, setDriveAccountEmail] = useState<string | null>(null);
+  const [gmailAccessToken, setGmailAccessTokenState] = useState<string | null>(null);
+  const [gmailAccountEmail, setGmailAccountEmail] = useState<string | null>(null);
 
   const isConnectingDriveRef = React.useRef(false);
   const adminSessionRef = React.useRef(initialStored.active);
@@ -401,8 +515,11 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const authUnsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       if (!currentUser) {
         clearDriveAccessToken();
+        clearGmailAccessToken();
         setDriveAccessTokenState(null);
         setDriveAccountEmail(null);
+        setGmailAccessTokenState(null);
+        setGmailAccountEmail(null);
       }
 
       // If connecting Google Drive while logged in as Wdracma Admin or Email member, preserve the active session profile
@@ -511,16 +628,28 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     return () => clearInterval(timer);
   }, [user, emailToken, userProfile, adminSession, fetchMemberStatusFromServer, fetchEmailMemberProfile]);
 
-  const loginWithGoogle = async (): Promise<UserProfile | null> => {
-    setLoading(true);
+  const executeGooglePopup = async (useBasicOnly: boolean): Promise<UserProfile | null> => {
     setError(null);
     try {
-      const result = await signInWithPopup(auth, googleProvider);
+      const provider = buildGoogleOAuthProvider({
+        basicOnly: useBasicOnly,
+        forceConsent: false,
+      });
+      const result = await signInWithPopup(auth, provider);
       const credential = GoogleAuthProvider.credentialFromResult(result);
-      if (credential?.accessToken) {
-        setDriveAccessToken(credential.accessToken, result.user?.email || null);
-        setDriveAccessTokenState(credential.accessToken);
-        setDriveAccountEmail(result.user?.email || null);
+      if (credential?.accessToken && !useBasicOnly) {
+        const mail = result.user?.email || null;
+        const scopeInfo = await inspectGrantedOAuthScopes(credential.accessToken);
+        if (scopeInfo.hasDriveScope) {
+          setDriveAccessToken(credential.accessToken, mail);
+          setDriveAccessTokenState(credential.accessToken);
+          setDriveAccountEmail(mail);
+        }
+        if (scopeInfo.hasGmailScope) {
+          setGmailAccessToken(credential.accessToken, mail);
+          setGmailAccessTokenState(credential.accessToken);
+          setGmailAccountEmail(mail);
+        }
       }
       try {
         localStorage.removeItem(EMAIL_STORAGE_KEY);
@@ -536,15 +665,21 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       setError(msg);
       console.error('Login error:', err);
       return null;
-    } finally {
-      setLoading(false);
     }
+  };
+
+  const loginWithGoogle = async (): Promise<UserProfile | null> => {
+    return executeGooglePopup(false);
+  };
+
+  const loginWithBasicGoogle = async (): Promise<UserProfile | null> => {
+    return executeGooglePopup(true);
   };
 
   const connectGoogleDrive = useCallback(async (): Promise<string | null> => {
     isConnectingDriveRef.current = true;
     try {
-      const provider = createDriveConsentProvider();
+      const provider = buildGoogleOAuthProvider({ forceConsent: true });
       const result = await signInWithPopup(auth, provider);
       const credential = GoogleAuthProvider.credentialFromResult(result);
       if (!credential?.accessToken) {
@@ -552,9 +687,20 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       }
       const token = credential.accessToken;
       const connectedMail = result.user?.email || null;
+      const scopeInfo = await inspectGrantedOAuthScopes(token);
+      if (scopeInfo.verified && !scopeInfo.hasDriveScope) {
+        throw new Error(
+          'Permissões do Google Drive não foram marcadas na janela do Google. Autorize os escopos do Drive e tente novamente.'
+        );
+      }
       setDriveAccessToken(token, connectedMail);
       setDriveAccessTokenState(token);
       setDriveAccountEmail(connectedMail);
+      if (scopeInfo.hasGmailScope) {
+        setGmailAccessToken(token, connectedMail);
+        setGmailAccessTokenState(token);
+        setGmailAccountEmail(connectedMail);
+      }
       return token;
     } catch (err) {
       console.error('Google Drive connection error:', err);
@@ -568,6 +714,46 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     clearDriveAccessToken();
     setDriveAccessTokenState(null);
     setDriveAccountEmail(null);
+  }, []);
+
+  const connectGmail = useCallback(async (): Promise<string | null> => {
+    isConnectingDriveRef.current = true;
+    try {
+      const provider = buildGoogleOAuthProvider({ forceConsent: true });
+      const result = await signInWithPopup(auth, provider);
+      const credential = GoogleAuthProvider.credentialFromResult(result);
+      if (!credential?.accessToken) {
+        throw new Error('Não foi possível obter o token de acesso do Gmail.');
+      }
+      const token = credential.accessToken;
+      const connectedMail = result.user?.email || null;
+      const scopeInfo = await inspectGrantedOAuthScopes(token);
+      if (scopeInfo.verified && !scopeInfo.hasGmailScope) {
+        throw new Error(
+          'Permissões do Gmail não foram marcadas na janela de consentimento Google. Marque as caixas de acesso ao Gmail para continuar.'
+        );
+      }
+      setGmailAccessToken(token, connectedMail);
+      setGmailAccessTokenState(token);
+      setGmailAccountEmail(connectedMail);
+      if (scopeInfo.hasDriveScope) {
+        setDriveAccessToken(token, connectedMail);
+        setDriveAccessTokenState(token);
+        setDriveAccountEmail(connectedMail);
+      }
+      return token;
+    } catch (err) {
+      console.error('Gmail connection error:', err);
+      throw new Error(formatFirebaseAuthError(err));
+    } finally {
+      isConnectingDriveRef.current = false;
+    }
+  }, []);
+
+  const disconnectGmail = useCallback(() => {
+    clearGmailAccessToken();
+    setGmailAccessTokenState(null);
+    setGmailAccountEmail(null);
   }, []);
 
   const loginWithEmailStart = async (
@@ -686,7 +872,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     nameInput: string,
     passInput: string
   ): Promise<{ success: boolean; error?: string }> => {
-    setLoading(true);
     setError(null);
     const cleanName = (nameInput || '').trim();
     const cleanPass = (passInput || '').trim();
@@ -703,7 +888,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       if (!data) {
         const errMsg = `Endpoint administrativo indisponível (HTTP ${resp.status}). Verifique se as rotas /api/* estão configuradas no deploy.`;
         setError(errMsg);
-        setLoading(false);
         return { success: false, error: errMsg };
       }
 
@@ -730,16 +914,13 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         setAdminToken(data.token);
         setAdminSession(true);
         setUserProfile(adminProf);
-        setLoading(false);
         return { success: true };
       }
 
       const errMsg = data?.error || 'Nome ou senha administrativa incorretos.';
       setError(errMsg);
-      setLoading(false);
       return { success: false, error: errMsg };
     } catch {
-      setLoading(false);
       const errMsg = 'Erro de conexão ao validar credenciais administrativas.';
       setError(errMsg);
       return { success: false, error: errMsg };
@@ -895,8 +1076,11 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         localStorage.removeItem(EMAIL_STORAGE_KEY);
       } catch {}
       clearDriveAccessToken();
+      clearGmailAccessToken();
       setDriveAccessTokenState(null);
       setDriveAccountEmail(null);
+      setGmailAccessTokenState(null);
+      setGmailAccountEmail(null);
       adminSessionRef.current = false;
       emailTokenRef.current = null;
       setAdminSession(false);
@@ -946,13 +1130,18 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         emailToken,
         driveAccessToken,
         driveAccountEmail,
+        gmailAccessToken,
+        gmailAccountEmail,
         isAdmin,
         isMember,
         loading,
         error,
         loginWithGoogle,
+        loginWithBasicGoogle,
         connectGoogleDrive,
         disconnectGoogleDrive,
+        connectGmail,
+        disconnectGmail,
         loginWithEmailStart,
         loginWithEmailPassword,
         loginWithAdminCredentials,

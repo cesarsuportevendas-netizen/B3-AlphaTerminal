@@ -39,6 +39,7 @@ import { EmptyState } from './components/EmptyState';
 import { LoginModal } from './components/LoginModal';
 import { AdminManager } from './components/AdminManager';
 import { GoogleDriveManager } from './components/GoogleDriveManager';
+import { GmailManager } from './components/GmailManager';
 import { AuthGate } from './components/AuthGate';
 import { useAuth } from './context/AuthContext';
 import { exportToExcel, exportToCSV } from './utils/excelParser';
@@ -77,6 +78,11 @@ export default function App() {
   const [filters, setFilters] = useState<FilterState>(INITIAL_FILTERS);
   const [activeNotifications, setActiveNotifications] = useState<ActiveNotification[]>([]);
   const [isRefreshingOnline, setIsRefreshingOnline] = useState(false);
+  const [gmailInitialDraft, setGmailInitialDraft] = useState<{
+    to?: string;
+    subject: string;
+    body: string;
+  } | null>(null);
 
   const TAB_LABELS: Record<string, string> = {
     top10: 'Destaques Top 10',
@@ -94,6 +100,7 @@ export default function App() {
     alerts: 'Alertas',
     reports: 'Relatórios Executivos',
     drive: 'Google Drive',
+    gmail: 'Gmail',
     admin: 'Painel do Administrador',
   };
 
@@ -537,6 +544,25 @@ export default function App() {
                 }, 5000);
               }}
             />
+          ) : activeTab === 'gmail' ? (
+            <GmailManager
+              stocks={stocks}
+              filteredStocks={filteredStocks}
+              initialDraft={gmailInitialDraft}
+              onClearInitialDraft={() => setGmailInitialDraft(null)}
+              onNotify={(title, body) => {
+                const notif: ActiveNotification = {
+                  id: 'notif_' + Date.now(),
+                  title,
+                  body,
+                  timestamp: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
+                };
+                setActiveNotifications((prev) => [notif, ...prev.slice(0, 3)]);
+                setTimeout(() => {
+                  setActiveNotifications((prev) => prev.filter((n) => n.id !== notif.id));
+                }, 5000);
+              }}
+            />
           ) : stocks.length === 0 ? (
             <EmptyState
               onOpenUpload={() => setIsUploadOpen(true)}
@@ -673,6 +699,27 @@ export default function App() {
             <ExecutiveReportView
               stocks={filteredStocks}
               onExportCSV={() => exportStocksToCSV(filteredStocks)}
+              onSendByGmail={() => {
+                const top = filteredStocks.slice(0, 10);
+                const dateStr = new Date().toLocaleDateString('pt-BR');
+                const body = top
+                  .map(
+                    (s, idx) =>
+                      `${idx + 1}. ${s.papel} (${s.nomeEmpresa || s.papel}) - R$ ${Number(
+                        s.cotacao
+                      )
+                        .toFixed(2)
+                        .replace('.', ',')} | P/L ${Number(s.pl || 0).toFixed(2)}x | DY ${Number(
+                        s.divYield || 0
+                      ).toFixed(1)}% | ROIC ${Number(s.roic || 0).toFixed(1)}%`
+                  )
+                  .join('\n');
+                setGmailInitialDraft({
+                  subject: `Relatório Executivo B3 AlphaTerminal (${dateStr})`,
+                  body: `Relatório Executivo - Top ${top.length} Ações B3 (${dateStr})\n\n${body}`,
+                });
+                handleNavigateTab('gmail');
+              }}
             />
           )}
             </>
